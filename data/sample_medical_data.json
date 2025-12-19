@@ -1,0 +1,61 @@
+{
+  "diseases": [
+    {
+      "name": "高血压",
+      "category": "心血管疾病",
+      "description": "以体循环动脉血压增高为主要特征的临床综合征",
+      "common_symptoms": ["头痛", "头晕", "心悸"],
+      "department": "心内科"
+    },
+    {
+      "name": "糖尿病",
+      "category": "内分泌疾病",
+      "description": "以高血糖为特征的代谢性疾病",
+      "common_symptoms": ["多饮", "多尿", "多食", "体重下降"],
+      "department": "内分泌科"
+    },
+    {
+      "name": "感冒",
+      "category": "呼吸系统疾病",
+      "description": "急性上呼吸道感染",
+      "common_symptoms": ["发热", "咳嗽", "流鼻涕", "咽痛"],
+      "department": "呼吸内科"
+    }
+  ],
+  "symptoms": [
+    {"name": "头痛", "severity": "中度", "description": "头部疼痛不适"},
+    {"name": "头晕", "severity": "轻度", "description": "感觉头部眩晕"},
+    {"name": "心悸", "severity": "中度", "description": "心跳加快或不规律"},
+    {"name": "多饮", "severity": "中度", "description": "口渴，饮水量增加"},
+    {"name": "多尿", "severity": "中度", "description": "排尿次数和尿量增加"},
+    {"name": "发热", "severity": "中度", "description": "体温升高"}
+  ],
+  "drugs": [
+    {
+      "name": "硝苯地平",
+      "type": "降压药",
+      "usage": "口服",
+      "dosage": "10-20mg，每日2-3次",
+      "treats": ["高血压"]
+    },
+    {
+      "name": "二甲双胍",
+      "type": "降糖药",
+      "usage": "口服",
+      "dosage": "500mg，每日2-3次",
+      "treats": ["糖尿病"]
+    },
+    {
+      "name": "对乙酰氨基酚",
+      "type": "解热镇痛药",
+      "usage": "口服",
+      "dosage": "500mg，每4-6小时一次",
+      "treats": ["感冒", "发热"]
+    }
+  ],
+  "departments": [
+    {"name": "心内科", "description": "诊治心血管系统疾病"},
+    {"name": "内分泌科", "description": "诊治内分泌系统疾病"},
+    {"name": "呼吸内科", "description": "诊治呼吸系统疾病"}
+  ]
+}

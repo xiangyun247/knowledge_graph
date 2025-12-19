@@ -1,0 +1,3 @@
+# data/raw/.gitkeep
+# 此文件用于保持 raw 目录在 Git 中存在
+# 你可以在此目录放置原始医学文档（.txt, .pdf 等）

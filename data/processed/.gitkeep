@@ -1,0 +1,3 @@
+# data/processed/.gitkeep
+# 此文件用于保持 processed 目录在 Git 中存在
+# 系统处理后的数据会保存在这里

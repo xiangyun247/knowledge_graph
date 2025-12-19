@@ -1,0 +1,291 @@
+# .gitignore - Python 项目和本项目特定的忽略规则
+
+# ==================== Python ====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+
+# ==================== 项目特定 ====================
+
+# 环境变量文件 (保留 .env.example)
+.env
+.env.local
+.env.*.local
+
+# 日志文件
+logs/
+*.log
+*.log.*
+
+# 数据文件
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/examples/
+
+# 模型文件 (本地 Embedding 模型)
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Neo4j 数据 (如果本地运行)
+neo4j_data/
+.neo4j/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# 上传文件
+uploads/
+
+# 缓存
+.cache/
+cache/
+
+# 数据库备份
+*.dump
+*.backup
+
+# ==================== IDE / 编辑器 ====================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+
+# ==================== Docker ====================
+# Docker 卷数据
+docker-data/
+docker-volumes/
+
+# Docker Compose 覆盖文件
+docker-compose.override.yml
+
+
+# ==================== 测试和性能分析 ====================
+# 测试输出
+test-results/
+test-reports/
+
+# 性能分析
+*.prof
+*.lprof
+
+
+# ==================== 其他 ====================
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# 密钥文件
+*.pem
+*.key
+*.crt
+secrets/
+
+# 大文件 (LFS 管理)
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+
+# 备注文件
+TODO.md
+NOTES.md

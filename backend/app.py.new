@@ -1,0 +1,307 @@
+# 重新实现的核心API：文件上传、知识图谱生成和历史记录
+
+# 文件上传API
+@app.post("/api/upload", tags=["文件上传"])
+async def upload_file(file: UploadFile = File(...)):
+    """上传文件"""
+    try:
+        # 生成唯一文件ID
+        file_id = str(uuid.uuid4())
+        
+        # 保存文件到本地
+        file_path = os.path.join(UPLOAD_DIR, file_id)
+        content = b''
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 每次读取1MB
+                if not chunk:
+                    break
+                content += chunk
+                f.write(chunk)
+        
+        # 存储文件信息
+        uploaded_files[file_id] = {
+            "filename": file.filename,
+            "path": file_path,
+            "size": len(content),
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "content": content.decode("utf-8", errors="ignore") if isinstance(content, bytes) else content
+        }
+        
+        logger.info(f"文件上传成功: {file.filename} (ID: {file_id})")
+        
+        # 保存上传记录到MySQL
+        if mysql_client:
+            try:
+                history_id = mysql_client.save_history_record({
+                    "type": "upload",
+                    "content": {
+                        "file_id": file_id,
+                        "filename": file.filename,
+                        "size": len(content)
+                    },
+                    "status": "success"
+                })
+                logger.info(f"上传记录已保存到MySQL: {history_id}")
+            except Exception as e:
+                logger.error(f"保存上传记录到MySQL失败: {str(e)}")
+        
+        return {
+            "status": "success",
+            "file_id": file_id,
+            "filename": file.filename,
+            "message": "文件上传成功"
+        }
+        
+    except Exception as e:
+        logger.error(f"文件上传失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+# 从文件生成知识图谱API
+@app.post("/api/kg/build", tags=["知识图谱构建"])
+async def build_kg_from_file(request: BuildKGFromFileRequest):
+    """从上传的文件生成知识图谱（异步）"""
+    try:
+        file_id = request.file_id
+        
+        # 检查文件是否存在
+        if file_id not in uploaded_files:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+        
+        # 初始化任务信息
+        tasks[task_id] = {
+            "status": TaskStatus.PROCESSING,
+            "progress": 0,
+            "current_chunk": 0,
+            "total_chunks": 0,
+            "entities_created": 0,
+            "relations_created": 0,
+            "message": "任务已创建，开始处理",
+            "current_processing": "初始化",
+            "file_id": file_id
+        }
+        
+        # 启动后台线程处理任务
+        thread = threading.Thread(target=build_kg_background_new, args=(task_id, file_id))
+        thread.start()
+        
+        logger.info(f"知识图谱构建任务已启动: {task_id} (文件: {file_id})")
+        
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "message": "知识图谱构建任务已启动"
+        }
+        
+    except Exception as e:
+        logger.error(f"启动知识图谱构建任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
+
+# 重新实现的后台知识图谱构建函数
+def build_kg_background_new(task_id: str, file_id: str):
+    """后台线程处理知识图谱构建任务"""
+    try:
+        # 获取文件信息
+        if file_id not in uploaded_files:
+            tasks[task_id] = {
+                "status": TaskStatus.FAILED,
+                "progress": 0,
+                "current_chunk": 0,
+                "total_chunks": 0,
+                "entities_created": 0,
+                "relations_created": 0,
+                "message": "文件不存在",
+                "current_processing": "",
+                "file_id": file_id
+            }
+            return
+        
+        file_info = uploaded_files[file_id]
+        filename = file_info["filename"]
+        file_content = file_info["content"]
+        
+        # 更新任务状态
+        tasks[task_id] = {
+            "status": TaskStatus.PROCESSING,
+            "progress": 10,
+            "current_chunk": 1,
+            "total_chunks": 1,
+            "entities_created": 0,
+            "relations_created": 0,
+            "message": "正在准备处理文件...",
+            "current_processing": "文件预处理",
+            "file_id": file_id
+        }
+        
+        # 读取文件内容
+        text = file_content
+        
+        # 更新任务状态
+        tasks[task_id] = {
+            "status": TaskStatus.PROCESSING,
+            "progress": 30,
+            "current_chunk": 1,
+            "total_chunks": 1,
+            "entities_created": 0,
+            "relations_created": 0,
+            "message": "正在生成知识图谱...",
+            "current_processing": "生成知识图谱",
+            "file_id": file_id
+        }
+        
+        # 使用知识图谱构建器生成知识图谱
+        if kg_builder:
+            result = kg_builder.process_text(text)
+            
+            entities_count = result.get("entities_created", 0)
+            relations_count = result.get("relations_created", 0)
+            
+            # 更新任务状态
+            tasks[task_id] = {
+                "status": TaskStatus.COMPLETED,
+                "progress": 100,
+                "current_chunk": 1,
+                "total_chunks": 1,
+                "entities_created": entities_count,
+                "relations_created": relations_count,
+                "message": "知识图谱生成成功",
+                "current_processing": "完成",
+                "file_id": file_id
+            }
+            
+            # 将知识图谱记录存储到MySQL
+            if mysql_client:
+                try:
+                    graph_id = mysql_client.create_graph(
+                        graph_name=filename,
+                        description=f"从文件{filename}生成的知识图谱",
+                        data_source=file_id,
+                        file_path=file_info["path"],
+                        user_id="current_user"
+                    )
+                    # 更新图谱状态
+                    mysql_client.update_graph_status(
+                        graph_id=graph_id,
+                        status="completed",
+                        entity_count=entities_count,
+                        relation_count=relations_count
+                    )
+                    logger.info(f"知识图谱记录已存储到MySQL: {graph_id}")
+                except Exception as e:
+                    logger.error(f"存储知识图谱记录到MySQL失败: {str(e)}")
+            
+            # 保存历史记录
+            if mysql_client:
+                try:
+                    mysql_client.save_history_record({
+                        "type": "upload",
+                        "content": {
+                            "file_id": file_id,
+                            "filename": filename,
+                            "task_id": task_id,
+                            "graph_id": graph_id,
+                            "entities_count": entities_count,
+                            "relations_count": relations_count
+                        },
+                        "status": "success"
+                    })
+                    logger.info(f"历史记录已保存到MySQL")
+                except Exception as e:
+                    logger.error(f"保存历史记录到MySQL失败: {str(e)}")
+            
+        else:
+            tasks[task_id] = {
+                "status": TaskStatus.FAILED,
+                "progress": 0,
+                "current_chunk": 0,
+                "total_chunks": 0,
+                "entities_created": 0,
+                "relations_created": 0,
+                "message": "知识图谱构建器未初始化",
+                "current_processing": "",
+                "file_id": file_id
+            }
+            
+    except Exception as e:
+        logger.error(f"知识图谱构建失败: {str(e)}")
+        tasks[task_id] = {
+            "status": TaskStatus.FAILED,
+            "progress": 0,
+            "current_chunk": 0,
+            "total_chunks": 0,
+            "entities_created": 0,
+            "relations_created": 0,
+            "message": f"构建失败: {str(e)}",
+            "current_processing": "",
+            "file_id": file_id
+        }
+
+# 获取历史记录API
+@app.get("/api/history/list", tags=["历史记录"])
+async def get_history_list(type: Optional[str] = None, status: Optional[str] = None):
+    """获取历史记录列表"""
+    try:
+        if mysql_client:
+            # 根据类型获取历史记录
+            history_records = mysql_client.get_histories()
+            
+            # 如果指定了类型，则过滤
+            if type:
+                history_records = [record for record in history_records if record.get('type') == type]
+            
+            return {
+                "status": "success",
+                "data": {
+                    "list": history_records,
+                    "total": len(history_records)
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "MySQL客户端未初始化"
+            }
+    except Exception as e:
+        logger.error(f"获取历史记录失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取历史记录失败: {str(e)}")
+
+# 获取知识图谱列表API
+@app.get("/api/kg/list", tags=["知识图谱"])
+async def get_kg_list():
+    """获取已生成的知识图谱列表"""
+    try:
+        if mysql_client:
+            kg_records = mysql_client.get_graphs()
+            
+            # 转换为前端期望的格式
+            formatted_records = []
+            for record in kg_records:
+                formatted_records.append({
+                    "id": record.get('graph_id', ''),
+                    "name": record.get('graph_name', ''),
+                    "description": record.get('description', ''),
+                    "file_path": record.get('file_path', ''),
+                    "status": record.get('status', ''),
+                    "entities_count": record.get('entity_count', 0),
+                    "relations_count": record.get('relation_count', 0),
+                    "created_at": record.get('created_at', '')
+                })
+            
+            return {
+                "status": "success",
+                "data": {
+                    "list": formatted_records,
+                    "total": len(formatted_records)
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "MySQL客户端未初始化"
+            }
+    except Exception as e:
+        logger.error(f"获取知识图谱列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取知识图谱列表失败: {str(e)}")

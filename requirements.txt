@@ -1,0 +1,14 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+neo4j==5.14.1
+openai==1.3.0  # DeepSeek API 兼容 OpenAI SDK
+sentence-transformers==2.2.2  # 本地 embedding
+torch>=2.0.0  # sentence-transformers 依赖
+python-multipart==0.0.6  # 文件上传
+python-dotenv==1.0.0
+pdfplumber==0.10.3
+mysql-connector-python==8.2.0  # MySQL数据库连接
+sqlalchemy==2.0.23  # SQL ORM框架
+pymysql==1.1.2
