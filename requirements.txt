@@ -4,7 +4,8 @@ pydantic==2.5.0
 pydantic-settings==2.1.0
 neo4j==5.14.1
 openai==1.3.0  # DeepSeek API 兼容 OpenAI SDK
-sentence-transformers==2.2.2  # 本地 embedding
+httpx==0.27.2  # 固定版本，避免与 openai 1.3.0 的兼容性问题（0.28+ 移除了 proxies 参数）
+sentence-transformers>=5.2.0  # 本地 embedding (需要与 huggingface_hub 兼容)
 torch>=2.0.0  # sentence-transformers 依赖
 python-multipart==0.0.6  # 文件上传
 python-dotenv==1.0.0

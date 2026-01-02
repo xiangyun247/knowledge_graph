@@ -256,19 +256,26 @@ class KnowledgeGraphBuilder:
             entity_type = "Disease"  # 默认为疾病
 
         # 创建或更新节点
+        # 确保 entity_type 是有效的标签（Neo4j 标签不能包含特殊字符）
+        # 清理 entity_type，只保留字母和数字
+        import re
+        clean_entity_type = re.sub(r'[^a-zA-Z0-9_]', '', entity_type)
+        if not clean_entity_type:
+            clean_entity_type = "Entity"  # 如果清理后为空，使用默认标签
+        
         query = f"""
-        MERGE (e:{entity_type} {{name: $name}})
-        ON CREATE SET e.description = $description, e.created_at = datetime()
-        ON MATCH SET e.description = COALESCE($description, e.description), e.updated_at = datetime()
+        MERGE (e:{clean_entity_type} {{name: $name}})
+        ON CREATE SET e.description = $description, e.type = $entity_type, e.created_at = datetime()
+        ON MATCH SET e.description = COALESCE($description, e.description), e.type = $entity_type, e.updated_at = datetime()
         RETURN e
         """
 
         self.neo4j.execute_write(
             query,
-            {"name": name, "description": description}
+            {"name": name, "description": description, "entity_type": entity_type}
         )
 
-        logger.debug(f"创建/更新实体: {entity_type} - {name}")
+        logger.debug(f"创建/更新实体: {clean_entity_type} (原始类型: {entity_type}) - {name}")
 
     def _create_relation(self, relation: Dict[str, str]):
         """

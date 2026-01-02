@@ -49,14 +49,26 @@ class DeepSeekClient:
 
         # 初始化 OpenAI 客户端（DeepSeek 兼容 OpenAI API）
         try:
+            # 手动创建 httpx.Client，避免 openai 库内部传递不支持的参数
+            import httpx
+            
+            # 创建 httpx 客户端，不传递 proxies 参数（避免版本兼容性问题）
+            http_client = httpx.Client(
+                timeout=self.timeout,
+                # 不传递 proxies 参数，即使 httpx 支持，openai 库内部可能处理不当
+            )
+            
+            # 使用自定义的 http_client 初始化 OpenAI 客户端
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
-                timeout=self.timeout
+                http_client=http_client
             )
             logger.info(f"DeepSeek 客户端初始化成功 (模型: {self.model})")
         except Exception as e:
             logger.error(f"DeepSeek 客户端初始化失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息:\n{traceback.format_exc()}")
             raise
 
     def chat(
@@ -439,43 +451,81 @@ class EmbeddingClient:
     """
     嵌入向量客户端
 
-    注意：DeepSeek 目前没有官方嵌入 API
-    这里使用 OpenAI 兼容的嵌入模型（如 text-embedding-ada-002）
-    或者返回占位向量
+    支持两种模式：
+    1. 本地模型（sentence-transformers）：使用预训练的中文模型
+    2. API 服务（OpenAI 兼容）：使用远程 API
+    3. 占位模式：返回零向量（当以上两种都不可用时）
     """
 
     def __init__(
             self,
+            use_local: Optional[bool] = None,
+            local_model: Optional[str] = None,
             api_key: Optional[str] = None,
             base_url: str = "https://api.openai.com/v1",
-            model: str = "text-embedding-ada-002",
-            embedding_dim: int = 768
+            api_model: str = "text-embedding-ada-002",
+            embedding_dim: Optional[int] = None
     ):
         """
         初始化嵌入客户端
 
         Args:
+            use_local: 是否使用本地模型，默认从环境变量读取
+            local_model: 本地模型名称，默认从环境变量读取
             api_key: API 密钥（如使用 OpenAI）
             base_url: API 基础 URL
-            model: 嵌入模型名称
-            embedding_dim: 嵌入向量维度
+            api_model: API 模型名称
+            embedding_dim: 嵌入向量维度，默认根据模型自动检测
         """
+        import config
+        
+        # 从环境变量或参数获取配置
+        self.use_local = use_local if use_local is not None else config.USE_LOCAL_EMBEDDING
+        self.local_model = local_model or config.LOCAL_EMBEDDING_MODEL
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url
-        self.model = model
-        self.embedding_dim = embedding_dim
-
-        # 如果有 API 密钥，初始化客户端
-        if self.api_key:
+        self.api_model = api_model
+        
+        # 初始化标志
+        self.local_encoder = None
+        self.api_client = None
+        self.embedding_dim = embedding_dim or config.EMBEDDING_DIM
+        
+        # 优先使用本地模型
+        if self.use_local:
             try:
-                self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-                logger.info(f"嵌入客户端初始化成功 (模型: {self.model})")
+                logger.info(f"Loading local Embedding model: {self.local_model}")
+                from sentence_transformers import SentenceTransformer
+                
+                # 加载模型（首次运行会自动下载）
+                self.local_encoder = SentenceTransformer(self.local_model)
+                
+                # 获取模型的实际维度
+                if embedding_dim is None:
+                    # 测试编码一个短文本以获取维度
+                    test_embedding = self.local_encoder.encode("测试", convert_to_numpy=False)
+                    self.embedding_dim = len(test_embedding)
+                
+                logger.info(f"[OK] Local Embedding model loaded successfully (model: {self.local_model}, dim: {self.embedding_dim})")
+            except ImportError:
+                logger.error("[ERROR] sentence-transformers not installed, please run: pip install sentence-transformers")
+                self.local_encoder = None
             except Exception as e:
-                logger.warning(f"嵌入客户端初始化失败: {e}，将使用占位向量")
-                self.client = None
-        else:
-            logger.warning("未设置嵌入 API 密钥，将使用占位向量")
-            self.client = None
+                logger.error(f"[ERROR] Local model loading failed: {e}, will try API or placeholder")
+                self.local_encoder = None
+        
+        # 如果本地模型不可用，尝试使用 API
+        if not self.local_encoder and self.api_key:
+            try:
+                self.api_client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+                logger.info(f"[OK] Embedding API client initialized successfully (model: {self.api_model})")
+            except Exception as e:
+                logger.warning(f"⚠️  API 客户端初始化失败: {e}，将使用占位向量")
+                self.api_client = None
+        
+        # 如果都不可用，使用占位模式
+        if not self.local_encoder and not self.api_client:
+            logger.warning("[WARN] Embedding model not configured, will use placeholder vectors (vector retrieval will be unavailable)")
 
     def get_embedding(self, text: str) -> List[float]:
         """
@@ -487,19 +537,46 @@ class EmbeddingClient:
         Returns:
             嵌入向量
         """
-        # 如果有真实客户端，调用 API
-        if self.client:
+        # 优先使用本地模型
+        if self.local_encoder:
             try:
-                response = self.client.embeddings.create(
-                    input=text,
-                    model=self.model
+                # 使用 sentence-transformers 编码
+                embedding = self.local_encoder.encode(
+                    text,
+                    convert_to_numpy=False,  # 返回 Python list
+                    normalize_embeddings=True  # 归一化向量，提高相似度计算准确性
                 )
-                return response.data[0].embedding
+                # 确保返回 Python list
+                if isinstance(embedding, list):
+                    return embedding
+                elif hasattr(embedding, 'tolist'):
+                    return embedding.tolist()
+                else:
+                    return list(embedding)
             except Exception as e:
-                logger.error(f"获取嵌入向量失败: {e}，返回占位向量")
+                logger.error(f"本地模型编码失败: {e}，尝试使用 API")
+                # 降级到 API
+                if self.api_client:
+                    return self._get_embedding_from_api(text)
                 return self._get_placeholder_embedding()
-        else:
-            # 否则返回占位向量
+        
+        # 其次使用 API
+        if self.api_client:
+            return self._get_embedding_from_api(text)
+        
+        # 最后使用占位向量
+        return self._get_placeholder_embedding()
+    
+    def _get_embedding_from_api(self, text: str) -> List[float]:
+        """从 API 获取嵌入向量"""
+        try:
+            response = self.api_client.embeddings.create(
+                input=text,
+                model=self.api_model
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"API 获取嵌入向量失败: {e}，返回占位向量")
             return self._get_placeholder_embedding()
 
     def encode_single(self, text: str) -> List[float]:
@@ -511,7 +588,7 @@ class EmbeddingClient:
 
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        批量获取嵌入向量
+        批量获取嵌入向量（批量处理更高效）
 
         Args:
             texts: 文本列表
@@ -519,17 +596,43 @@ class EmbeddingClient:
         Returns:
             嵌入向量列表
         """
-        if self.client:
+        # 优先使用本地模型（批量处理更高效）
+        if self.local_encoder:
             try:
-                response = self.client.embeddings.create(
-                    input=texts,
-                    model=self.model
+                embeddings = self.local_encoder.encode(
+                    texts,
+                    convert_to_numpy=False,
+                    normalize_embeddings=True,
+                    batch_size=32,  # 批量处理，提高效率
+                    show_progress_bar=False
                 )
-                return [item.embedding for item in response.data]
+                # 转换为列表格式
+                if hasattr(embeddings, 'tolist'):
+                    return [emb.tolist() for emb in embeddings]
+                return [list(emb) for emb in embeddings]
             except Exception as e:
-                logger.error(f"批量获取嵌入向量失败: {e}，返回占位向量")
+                logger.error(f"本地模型批量编码失败: {e}，尝试使用 API")
+                if self.api_client:
+                    return self._get_embeddings_from_api(texts)
                 return [self._get_placeholder_embedding() for _ in texts]
-        else:
+        
+        # 使用 API
+        if self.api_client:
+            return self._get_embeddings_from_api(texts)
+        
+        # 占位向量
+        return [self._get_placeholder_embedding() for _ in texts]
+    
+    def _get_embeddings_from_api(self, texts: List[str]) -> List[List[float]]:
+        """从 API 批量获取嵌入向量"""
+        try:
+            response = self.api_client.embeddings.create(
+                input=texts,
+                model=self.api_model
+            )
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            logger.error(f"API 批量获取嵌入向量失败: {e}，返回占位向量")
             return [self._get_placeholder_embedding() for _ in texts]
 
     def _get_placeholder_embedding(self) -> List[float]:
@@ -539,12 +642,52 @@ class EmbeddingClient:
         Returns:
             占位嵌入向量
         """
-        import hashlib
-        import struct
-
-        # 使用简单的哈希方法生成伪随机向量
+        # 返回零向量作为占位
         # 注意：这只是占位，不具备语义相似性
         return [0.0] * self.embedding_dim
+    
+    def is_available(self) -> bool:
+        """
+        检查 Embedding 客户端是否可用
+
+        Returns:
+            True 如果本地模型或 API 可用，False 如果只能使用占位向量
+        """
+        return self.local_encoder is not None or self.api_client is not None
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        获取模型信息
+
+        Returns:
+            包含模型信息的字典
+        """
+        info = {
+            "mode": "placeholder",
+            "model": None,
+            "dimension": self.embedding_dim,
+            "available": False
+        }
+        
+        if self.local_encoder:
+            info.update({
+                "mode": "local",
+                "model": self.local_model,
+                "available": True
+            })
+        elif self.api_client:
+            info.update({
+                "mode": "api",
+                "model": self.api_model,
+                "available": True
+            })
+        
+        return info
 
     def __repr__(self) -> str:
-        return f"EmbeddingClient(model={self.model}, dim={self.embedding_dim})"
+        if self.local_encoder:
+            return f"EmbeddingClient(mode=local, model={self.local_model}, dim={self.embedding_dim})"
+        elif self.api_client:
+            return f"EmbeddingClient(mode=api, model={self.api_model}, dim={self.embedding_dim})"
+        else:
+            return f"EmbeddingClient(mode=placeholder, dim={self.embedding_dim})"

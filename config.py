@@ -30,14 +30,14 @@ neo4j_password = os.getenv("NEO4J_PASSWORD")
 deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
 
 if neo4j_password:
-    print(f"✓ NEO4J_PASSWORD 已加载 (长度: {len(neo4j_password)})")
+    print(f"[OK] NEO4J_PASSWORD loaded (length: {len(neo4j_password)})")
 else:
-    print("✗ NEO4J_PASSWORD 未加载")
+    print("[WARN] NEO4J_PASSWORD not loaded")
 
 if deepseek_api_key:
-    print(f"✓ DEEPSEEK_API_KEY 已加载 (长度: {len(deepseek_api_key)})")
+    print(f"[OK] DEEPSEEK_API_KEY loaded (length: {len(deepseek_api_key)})")
 else:
-    print("⚠️  DEEPSEEK_API_KEY 未加载")
+    print("[WARN] DEEPSEEK_API_KEY not loaded")
 
 # ==================== 项目路径配置 ====================
 
@@ -139,6 +139,10 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 # 服务器配置
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
+
+# 提供给测试脚本使用的后端地址
+BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")
+BACKEND_PORT = int(os.getenv("BACKEND_PORT", str(PORT)))
 
 # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

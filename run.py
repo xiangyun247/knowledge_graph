@@ -14,32 +14,9 @@ import uvicorn
 import config
 import logging
 
-# 创建日志过滤器，过滤掉 watchfiles 的 INFO 日志
-class WatchfilesFilter(logging.Filter):
-    """过滤 watchfiles 的 INFO 级别日志"""
-    def filter(self, record):
-        # 如果日志来自 watchfiles 且级别是 INFO，则过滤掉
-        if record.name.startswith("watchfiles") and record.levelno == logging.INFO:
-            return False
-        return True
-
 # 配置日志
 logging.config.dictConfig(config.LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
-
-# 隐藏 watchfiles 的所有 INFO 日志（在 uvicorn 启动前设置）
-logging.getLogger("watchfiles").setLevel(logging.WARNING)
-logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
-logging.getLogger("watchfiles.watcher").setLevel(logging.WARNING)
-
-# 为根日志记录器和所有处理器添加过滤器
-root_logger = logging.getLogger()
-watchfiles_filter = WatchfilesFilter()
-root_logger.addFilter(watchfiles_filter)
-
-# 为所有现有的处理器添加过滤器
-for handler in root_logger.handlers:
-    handler.addFilter(watchfiles_filter)
 
 
 def check_dependencies():
@@ -106,17 +83,6 @@ def start_server():
     logger.info(f"   应用路径: {app_path}\n")
 
     try:
-        # 再次确保 watchfiles 日志被隐藏（uvicorn 可能会重新配置日志）
-        logging.getLogger("watchfiles").setLevel(logging.WARNING)
-        logging.getLogger("watchfiles.main").setLevel(logging.WARNING)
-        logging.getLogger("watchfiles.watcher").setLevel(logging.WARNING)
-        
-        # 确保过滤器应用到所有处理器（uvicorn 启动后可能会创建新的处理器）
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers:
-            if watchfiles_filter not in handler.filters:
-                handler.addFilter(watchfiles_filter)
-        
         # 启动 uvicorn 服务器
         uvicorn.run(
             app_path,

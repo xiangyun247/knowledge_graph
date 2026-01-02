@@ -161,6 +161,77 @@ class MySQLClient:
         
         return self.execute_update(query, params)
     
+    def update_graph_data(self, graph_id, graph_data):
+        """
+        更新知识图谱数据（节点和关系）
+        
+        Args:
+            graph_id: 图谱ID
+            graph_data: 图谱数据字典，格式为 {"nodes": [...], "edges": [...]} 或 {"nodes": [...], "relations": [...]}
+        
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            import json
+            from datetime import datetime, date
+            
+            def serialize_datetime(obj):
+                """将 DateTime 对象转换为字符串"""
+                if isinstance(obj, (datetime, date)):
+                    return obj.isoformat()
+                elif hasattr(obj, '__dict__'):
+                    # 处理 Neo4j 的 DateTime 对象
+                    return str(obj)
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            
+            # 确保数据格式统一（使用 edges 而不是 relations）
+            if "relations" in graph_data and "edges" not in graph_data:
+                graph_data["edges"] = graph_data.pop("relations")
+            
+            # 清理数据中的 DateTime 对象
+            def clean_data(data):
+                """递归清理数据中的 DateTime 对象"""
+                if isinstance(data, dict):
+                    return {k: clean_data(v) for k, v in data.items()}
+                elif isinstance(data, list):
+                    return [clean_data(item) for item in data]
+                elif isinstance(data, (datetime, date)):
+                    return data.isoformat()
+                elif hasattr(data, '__dict__') and not isinstance(data, (str, int, float, bool, type(None))):
+                    # 处理 Neo4j 的特殊对象（如 DateTime）
+                    try:
+                        return str(data)
+                    except:
+                        return None
+                else:
+                    return data
+            
+            # 清理数据
+            cleaned_graph_data = clean_data(graph_data)
+            
+            # 将数据转换为 JSON 字符串
+            graph_data_json = json.dumps(cleaned_graph_data, ensure_ascii=False, default=serialize_datetime)
+            
+            query = """
+            UPDATE knowledge_graphs 
+            SET graph_data = :graph_data, updated_at = CURRENT_TIMESTAMP
+            WHERE graph_id = :graph_id
+            """
+            params = {
+                "graph_id": graph_id,
+                "graph_data": graph_data_json
+            }
+            
+            self.execute_update(query, params)
+            logger.info(f"成功更新图谱数据: {graph_id}")
+            return True
+        except Exception as e:
+            logger.error(f"更新图谱数据失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
+    
     def delete_graph(self, graph_id):
         """删除知识图谱"""
         query = "DELETE FROM knowledge_graphs WHERE graph_id = :graph_id"
@@ -231,16 +302,37 @@ class MySQLClient:
                         'question': query_text or '未知查询'
                     }
 
-            # 转换记录类型
+            # 转换记录类型（优先从 operation_content 里读取 record_type，如果没有再按老逻辑推断）
             record_type = ''
             op_type = record.get('operation_type')
-            if op_type == 'query':
+            
+            # 优先从 content 里读取 record_type（这是前端保存时显式写入的）
+            if isinstance(content, dict) and 'record_type' in content:
+                record_type = content.get('record_type', '')
+            # 如果没有 record_type，按老逻辑推断（兼容旧数据）
+            elif op_type == 'query':
                 if isinstance(content, dict) and 'entity' in content:
-                    record_type = 'graph'
+                    record_type = 'graph_query'  # 改为 graph_query，与前端一致
                 elif isinstance(content, dict) and 'question' in content:
                     record_type = 'chat'
-            elif op_type == 'create' and isinstance(content, dict) and 'filename' in content:
-                record_type = 'upload'
+                elif isinstance(content, dict) and ('query' in content or 'keyword' in content or 'searchType' in content):
+                    record_type = 'search'  # 实体搜索：content 里有 query/keyword/searchType
+                elif isinstance(content, dict) and ('graphId' in content or 'graphName' in content):
+                    record_type = 'graph_build'  # 图谱构建：content 里有 graphId/graphName
+            elif op_type == 'create':
+                if isinstance(content, dict) and 'filename' in content:
+                    record_type = 'upload'
+                elif isinstance(content, dict) and ('graphId' in content or 'graphName' in content):
+                    record_type = 'graph_build'  # 图谱构建也可能是 create 类型
+            
+            # 获取状态（优先从数据库读取，如果没有则根据类型默认）
+            status = record.get('status', 'completed')
+            if not status or status == 'pending':
+                # 如果状态是 pending，根据类型判断是否应该显示为"进行中"
+                if record_type == 'upload':
+                    status = 'pending'  # 上传默认 pending
+                else:
+                    status = 'completed'  # 其他类型默认 completed
             
             # 构建前端期望的记录结构
             frontend_record = {
@@ -248,17 +340,27 @@ class MySQLClient:
                 'type': record_type,
                 'title': '',  # 标题将在下面生成
                 'content': content,
-                'status': 'completed',  # 默认状态
+                'status': status,  # 使用从数据库读取的状态
                 'entities': [],  # 默认空数组
                 'createTime': record.get('created_at', ''),
                 'updateTime': record.get('created_at', '')  # 使用相同的时间
             }
             
-            # 生成标题
+            # 为 upload 类型添加 file_id（从 content 或 record 中提取）
+            if record_type == 'upload':
+                file_id = content.get('file_id') or content.get('fileId') or record.get('file_id')
+                if file_id:
+                    content['file_id'] = file_id
+            
+            # 生成标题（支持五大类型）
             if record_type == 'chat':
                 frontend_record['title'] = f"聊天: {content.get('question', '新对话')}"
-            elif record_type == 'graph':
+            elif record_type == 'search':
+                frontend_record['title'] = f"实体搜索: {content.get('query', content.get('keyword', '搜索'))}"
+            elif record_type == 'graph_query':
                 frontend_record['title'] = f"图谱查询: {content.get('entity', '知识图谱')}"
+            elif record_type == 'graph_build':
+                frontend_record['title'] = f"图谱构建: {content.get('graphName', content.get('graphId', '新图谱'))}"
             elif record_type == 'upload':
                 frontend_record['title'] = f"数据上传: {content.get('filename', '未知文件')}"
             else:
@@ -267,6 +369,60 @@ class MySQLClient:
             frontend_records.append(frontend_record)
         
         return frontend_records
+    
+    def get_history_stats(self):
+        """
+        获取历史记录统计信息
+        返回总数、成功数、失败数、今日数量等统计信息
+        """
+        try:
+            if not self.engine:
+                self.connect()
+            
+            stats = {}
+            
+            # 获取总数
+            total_query = "SELECT COUNT(*) as total FROM history_records"
+            result = self.execute_query(total_query)
+            stats["total"] = result[0]["total"] if result else 0
+            
+            # 获取成功数量
+            success_query = "SELECT COUNT(*) as success FROM history_records WHERE status = 'completed' OR status = 'success'"
+            result = self.execute_query(success_query)
+            stats["success"] = result[0]["success"] if result else 0
+            
+            # 获取失败数量
+            failed_query = "SELECT COUNT(*) as failed FROM history_records WHERE status = 'failed' OR status = 'error'"
+            result = self.execute_query(failed_query)
+            stats["failed"] = result[0]["failed"] if result else 0
+            
+            # 获取进行中数量
+            pending_query = "SELECT COUNT(*) as pending FROM history_records WHERE status = 'pending' OR status = 'processing'"
+            result = self.execute_query(pending_query)
+            stats["pending"] = result[0]["pending"] if result else 0
+            
+            # 获取今日数量
+            today_query = "SELECT COUNT(*) as today FROM history_records WHERE DATE(created_at) = CURDATE()"
+            result = self.execute_query(today_query)
+            stats["today"] = result[0]["today"] if result else 0
+            
+            # 按类型统计
+            type_query = """
+                SELECT 
+                    operation_type,
+                    COUNT(*) as count
+                FROM history_records
+                GROUP BY operation_type
+            """
+            result = self.execute_query(type_query)
+            stats["by_type"] = {row["operation_type"]: row["count"] for row in result} if result else {}
+            
+            return stats
+        except Exception as e:
+            logger.error(f"获取历史记录统计失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def save_history_record(self, data):
         """保存历史记录"""
@@ -335,9 +491,23 @@ class MySQLClient:
                     edges = content.get('edges', [])
                     relation_count = len(links) if isinstance(links, list) else len(edges) if isinstance(edges, list) else 0
             
+            # 把前端的完整 content（包含 type 信息）序列化成 JSON，保存到 operation_content
+            # 这样 get_histories 就能准确识别类型了
+            import json
+            operation_content_dict = {
+                **content,  # 包含所有前端传的 content 字段
+                'record_type': record_type,  # 显式保存前端传的 type，方便 get_histories 识别
+            }
+            operation_content_json = json.dumps(operation_content_dict, ensure_ascii=False)
+            
+            # 获取状态（优先使用前端传的 status，否则根据类型默认）
+            status = data.get('status', 'completed')
+            if record_type == 'upload':
+                status = data.get('status', 'pending')  # 上传默认 pending
+            
             query = """
-            INSERT INTO history_records (history_id, graph_id, user_id, query_text, answer_text, entity_count, relation_count, status, operation_type)
-            VALUES (:history_id, :graph_id, :user_id, :query_text, :answer_text, :entity_count, :relation_count, 'pending', :operation_type)
+            INSERT INTO history_records (history_id, graph_id, user_id, query_text, answer_text, entity_count, relation_count, status, operation_type, operation_content)
+            VALUES (:history_id, :graph_id, :user_id, :query_text, :answer_text, :entity_count, :relation_count, :status, :operation_type, :operation_content)
             """
             params = {
                 "history_id": history_id,
@@ -347,7 +517,9 @@ class MySQLClient:
                 "answer_text": answer_text,
                 "entity_count": entity_count,
                 "relation_count": relation_count,
-                "operation_type": operation_type
+                "status": status,
+                "operation_type": operation_type,
+                "operation_content": operation_content_json
             }
             self.execute_update(query, params)
             return history_id

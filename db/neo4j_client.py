@@ -63,7 +63,19 @@ class Neo4jClient:
         try:
             with self.driver.session(database=self.database) as session:
                 result = session.run(query, parameters or {})
-                return [record.data() for record in result]
+                records = []
+                for record in result:
+                    data = record.data()
+                    # 确保 labels 是列表格式（如果是其他格式，转换为列表）
+                    if 'labels' in data:
+                        labels = data['labels']
+                        if not isinstance(labels, list):
+                            if labels is None:
+                                data['labels'] = []
+                            else:
+                                data['labels'] = [labels] if labels else []
+                    records.append(data)
+                return records
         except Exception as e:
             logger.error(f"查询执行失败: {e}")
             logger.error(f"查询语句: {query}")
@@ -260,6 +272,156 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"搜索实体失败: {e}")
             return []
+
+    def get_all_nodes_and_relationships(
+            self,
+            limit: Optional[int] = None,
+            offset: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        获取所有节点和关系（用于知识图谱可视化）
+
+        Args:
+            limit: 节点数量限制（可选）
+            offset: 偏移量（可选）
+
+        Returns:
+            包含 nodes 和 relationships 的字典
+        """
+        try:
+            # 构建节点查询
+            node_query = """
+            MATCH (n)
+            RETURN n, labels(n) as labels, id(n) as node_id
+            """
+            
+            if limit is not None:
+                node_query += f" SKIP {offset or 0} LIMIT {limit}"
+            
+            node_results = self.execute_query(node_query)
+            
+            # 格式化节点
+            nodes = []
+            node_id_map = {}  # 映射 Neo4j 内部 ID 到节点索引
+            
+            for idx, record in enumerate(node_results):
+                node = record['n']
+                labels = record.get('labels', [])
+                neo4j_id = record.get('node_id')
+                
+                # 确保 labels 是列表格式
+                if not isinstance(labels, list):
+                    if labels is None:
+                        labels = []
+                    else:
+                        labels = [labels] if labels else []
+                
+                # 获取节点属性
+                node_props = dict(node) if hasattr(node, 'keys') else {}
+                node_name = node_props.get('name', node_props.get('title', f'Node_{neo4j_id}'))
+                
+                # 获取节点类型（优先使用 labels，如果没有则尝试从 properties 中获取）
+                if labels and len(labels) > 0:
+                    node_type = str(labels[0])  # 确保是字符串
+                elif 'type' in node_props:
+                    node_type = str(node_props.get('type'))
+                elif 'category' in node_props:
+                    node_type = str(node_props.get('category'))
+                else:
+                    # 如果都没有，记录警告并尝试从节点属性推断
+                    logger.warning(f"节点 {node_name} (ID: {neo4j_id}) 没有 labels，labels={labels}, 尝试从属性推断类型")
+                    # 尝试从节点属性中推断类型
+                    node_type = 'Unknown'
+                    # 如果节点有 description 属性，可能是疾病
+                    if 'description' in node_props:
+                        node_type = 'Disease'  # 默认推断为疾病
+                
+                # 将节点类型转换为小写，以匹配前端期望的格式
+                # 前端期望: 'disease', 'symptom', 'treatment', 'medicine', 'examination', 'location'
+                # 后端返回: 'Disease', 'Symptom', 'Treatment', 'Medicine', 'Examination', 'Department'
+                node_type_lower = node_type.lower()
+                
+                # 类型映射：将后端类型映射到前端期望的类型
+                type_mapping = {
+                    'disease': 'disease',
+                    'symptom': 'symptom',
+                    'treatment': 'treatment',
+                    'medicine': 'medicine',
+                    'examination': 'examination',
+                    'department': 'location',  # Department 映射到 location
+                    'complication': 'disease',  # Complication 映射到 disease
+                    'riskfactor': 'disease',  # RiskFactor 映射到 disease
+                    'unknown': 'disease'  # Unknown 默认映射到 disease
+                }
+                
+                # 使用映射后的类型，如果没有映射则使用小写类型
+                mapped_category = type_mapping.get(node_type_lower, node_type_lower)
+                
+                # 记录前几个节点的信息用于调试
+                if idx < 5:
+                    logger.info(f"[DEBUG] 节点 {idx}: name={node_name}, labels={labels}, node_type={node_type}, mapped_category={mapped_category}")
+                
+                # 生成前端需要的节点格式
+                node_data = {
+                    'id': str(neo4j_id),  # 使用 Neo4j 内部 ID 作为唯一标识
+                    'name': node_name,
+                    'category': mapped_category,  # 使用映射后的类型
+                    'label': node_name,
+                    'type': node_type,  # 保留原始类型
+                    'properties': node_props
+                }
+                
+                nodes.append(node_data)
+                node_id_map[neo4j_id] = idx
+            
+            # 获取关系（只获取与返回节点相关的关系）
+            if nodes:
+                node_ids_str = ','.join([str(record['node_id']) for record in node_results])
+                rel_query = f"""
+                MATCH (a)-[r]->(b)
+                WHERE id(a) IN [{node_ids_str}] AND id(b) IN [{node_ids_str}]
+                RETURN id(a) as start_id, id(b) as end_id, type(r) as rel_type, r, properties(r) as rel_props
+                """
+            else:
+                rel_query = """
+                MATCH (a)-[r]->(b)
+                RETURN id(a) as start_id, id(b) as end_id, type(r) as rel_type, r, properties(r) as rel_props
+                LIMIT 0
+                """
+            
+            rel_results = self.execute_query(rel_query)
+            
+            # 格式化关系
+            relationships = []
+            for record in rel_results:
+                start_id = record['start_id']
+                end_id = record['end_id']
+                rel_type = record['rel_type']
+                rel_props = record['rel_props']
+                
+                # 生成前端需要的关系格式
+                rel_data = {
+                    'id': f"{start_id}_{end_id}_{rel_type}",
+                    'source': str(start_id),
+                    'target': str(end_id),
+                    'label': rel_type,
+                    'type': rel_type,
+                    'relation': rel_type,
+                    'properties': rel_props
+                }
+                
+                relationships.append(rel_data)
+            
+            logger.info(f"从 Neo4j 获取了 {len(nodes)} 个节点和 {len(relationships)} 个关系")
+            
+            return {
+                'nodes': nodes,
+                'relationships': relationships
+            }
+            
+        except Exception as e:
+            logger.error(f"获取所有节点和关系失败: {e}")
+            return {'nodes': [], 'relationships': []}
 
     def close(self):
         """关闭数据库连接"""
