@@ -121,3 +121,5 @@ def get_celery_service() -> CeleryService:
     
     return _celery_service_instance
 
+
+

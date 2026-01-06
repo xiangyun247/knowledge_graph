@@ -27,12 +27,12 @@ except ImportError:
     logger.error("pdfplumber 未安装，无法提取 PDF 文本")
 
 
-def extract_pdf_text(file_path: str) -> str:
+def extract_pdf_text(hdfs_path: str) -> str:
     """
-    从 PDF 文件提取文本
+    从 HDFS 下载 PDF 文件并提取文本
     
     Args:
-        file_path: PDF 文件路径
+        hdfs_path: HDFS 中的 PDF 文件路径
         
     Returns:
         提取的文本内容
@@ -41,10 +41,35 @@ def extract_pdf_text(file_path: str) -> str:
         logger.error("pdfplumber 未安装")
         return ""
     
+    import tempfile
+    import subprocess
+    
+    # 创建临时文件
+    temp_file = None
     try:
+        # 从 HDFS 下载文件到本地临时目录
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            temp_file = tmp_file.name
+        
+        logger.info(f"从 HDFS 下载文件: {hdfs_path} -> {temp_file}")
+        
+        # 使用 hadoop fs -get 下载文件
+        result = subprocess.run(
+            ['hadoop', 'fs', '-get', hdfs_path, temp_file],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode != 0:
+            error_msg = f"HDFS 下载失败: {result.stderr}"
+            logger.error(error_msg)
+            return f"ERROR: {error_msg}"
+        
+        # 提取 PDF 文本
         text_parts = []
-        with pdfplumber.open(file_path) as pdf:
-            logger.info(f"处理 PDF 文件: {file_path}，共 {len(pdf.pages)} 页")
+        with pdfplumber.open(temp_file) as pdf:
+            logger.info(f"处理 PDF 文件: {hdfs_path}，共 {len(pdf.pages)} 页")
             for i, page in enumerate(pdf.pages):
                 page_text = page.extract_text() or ""
                 # 清理文本
@@ -56,8 +81,15 @@ def extract_pdf_text(file_path: str) -> str:
         return full_text
         
     except Exception as e:
-        logger.error(f"提取 PDF 文本失败: {file_path}, 错误: {e}")
+        logger.error(f"提取 PDF 文本失败: {hdfs_path}, 错误: {e}")
         return f"ERROR: {str(e)}"
+    finally:
+        # 清理临时文件
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
 
 
 def mapper():

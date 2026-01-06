@@ -1,593 +1,346 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
+Hadoop 与 Celery 集成 API
 
-Hadoop �?Celery 集成 API
+说明:
+- 提供批量上传 PDF 到 HDFS 的接口
+- 提供批量触发 Hadoop + Celery 构建知识图谱的接口
+- 提供查询批量任务状态的接口
 
-新增�?API 接口,用于支持批量处理�?Hadoop 集成
-
+注意:
+- 为避免循环导入, 与 FastAPI 应用相关的全局变量(如 uploaded_files、tasks、TaskStatus)
+  通过在函数内部延迟导入 `backend.app` 获取
 """
-
-
 
 import os
+import uuid
+import logging
+import threading
+from datetime import datetime
+from typing import List, Dict, Any
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
-
+from fastapi import APIRouter, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
-
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
-import uuid
-
-import logging
-
-from datetime import datetime
-
-
-
 from backend.hadoop_service import get_hadoop_service
-
 from backend.celery_service import get_celery_service
-
-
 
 logger = logging.getLogger(__name__)
 
 
-
 # 创建路由
-
 router = APIRouter(prefix="/api/hadoop", tags=["Hadoop集成"])
 
 
-
-
-
-class BatchUploadRequest(BaseModel):
-
-    """批量上传请求"""
-
-    file_ids: List[str] = Field(..., description="文件ID列表")
-
-
-
-
-
 class BatchBuildRequest(BaseModel):
+    """批量构建知识图谱请求体"""
 
-    """批量构建请求"""
-
-    file_ids: List[str] = Field(..., description="文件ID列表")
-
-    use_hadoop: bool = Field(True, description="是否使用Hadoop处理")
+    file_ids: List[str] = Field(..., description="要处理的文件ID列表")
+    use_hadoop: bool = Field(True, description="是否使用 Hadoop 进行批量处理")
 
 
+def _get_app_globals() -> Dict[str, Any]:
+    """
+    延迟导入 backend.app, 避免循环依赖
 
+    Returns:
+        包含 UPLOAD_DIR、uploaded_files、tasks、TaskStatus、mysql_client 等的字典
+    """
+    import backend.app as app_module
+
+    return {
+        "UPLOAD_DIR": app_module.UPLOAD_DIR,
+        "uploaded_files": app_module.uploaded_files,
+        "tasks": app_module.tasks,
+        "TaskStatus": app_module.TaskStatus,
+        "mysql_client": getattr(app_module, "mysql_client", None),
+        "history_records": getattr(app_module, "history_records", None),
+    }
 
 
 @router.post("/upload/batch")
-
 async def batch_upload_files(files: List[UploadFile] = File(...)):
-
     """
+    批量上传 PDF 文件到本地并同步上传到 HDFS
 
-    批量上传文件�?HDFS
-
-    
-
-    支持同时上传多个文件
-
+    - 将上传的文件保存到 backend/uploads 目录
+    - 记录到 `backend.app.uploaded_files`
+    - 调用 `HadoopService.upload_files_to_hdfs` 上传到 HDFS
     """
+    if not files:
+        raise HTTPException(status_code=400, detail="文件列表不能为空")
 
     try:
+        globals_ = _get_app_globals()
+        UPLOAD_DIR = globals_["UPLOAD_DIR"]
+        uploaded_files = globals_["uploaded_files"]
+        mysql_client = globals_["mysql_client"]
 
-        # 导入 app 模块中的全局变量(延迟导入避免循环)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-        import backend.app as app_module
-
-        UPLOAD_DIR = app_module.UPLOAD_DIR
-
-        uploaded_files = app_module.uploaded_files
-
-        mysql_client = app_module.mysql_client
-
-        
-
-        uploaded_file_ids = []
-
-        file_paths = []
-
-        
+        uploaded_file_ids: List[str] = []
+        file_paths: List[Dict[str, str]] = []
 
         for file in files:
-
             # 生成文件ID
-
             file_id = str(uuid.uuid4())
-
-            file_ext = os.path.splitext(file.filename)[1] if '.' in file.filename else ''
-
+            file_ext = os.path.splitext(file.filename)[1] if "." in file.filename else ""
             local_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
 
-            
-
-            # 保存到本�?
-
-            content = b''
-
+            # 保存到本地
+            size = 0
             with open(local_path, "wb") as f:
-
                 while True:
-
-                    chunk = await file.read(1024 * 1024)
-
+                    chunk = await file.read(1024 * 1024)  # 1MB
                     if not chunk:
-
                         break
-
-                    content += chunk
-
+                    size += len(chunk)
                     f.write(chunk)
 
-            
-
-            # 存储文件信息
-
+            # 记录到内存
             uploaded_files[file_id] = {
-
                 "filename": file.filename,
-
                 "path": local_path,
-
-                "size": len(content),
-
+                "size": size,
                 "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-
             }
 
-            
-
             uploaded_file_ids.append(file_id)
+            file_paths.append(
+                {
+                    "file_id": file_id,
+                    "local_path": local_path,
+                    "filename": file.filename,
+                }
+            )
 
-            file_paths.append({
-
-                "file_id": file_id,
-
-                "local_path": local_path,
-
-                "filename": file.filename
-
-            })
-
-        
-
-        # 上传�?HDFS
-
+        # 调用 Hadoop 服务, 上传到 HDFS
         hadoop_service = get_hadoop_service()
-
         upload_result = hadoop_service.upload_files_to_hdfs(file_paths)
 
-        
+        logger.info(
+            "批量上传完成: %d 个文件, HDFS 上传成功: %d, 失败: %d",
+            len(files),
+            upload_result.get("success_count", 0),
+            upload_result.get("failed_count", 0),
+        )
 
-        logger.info(f"批量上传完成: {len(files)} 个文�? HDFS上传成功: {upload_result['success_count']}")
+        # 可选: 写入上传历史到 MySQL
+        if mysql_client:
+            try:
+                for fid in uploaded_file_ids:
+                    info = uploaded_files.get(fid, {})
+                    mysql_client.create_history_record(
+                        file_id=fid,
+                        file_name=info.get("filename", ""),
+                        file_type="hadoop_upload",
+                        task_id=fid,
+                    )
+            except Exception as e:  # pragma: no cover - 日志用途
+                logger.error("保存批量上传历史记录到 MySQL 失败: %s", e)
 
-        
+        return JSONResponse(
+            {
+                "status": "success",
+                "total_files": len(files),
+                "uploaded_file_ids": uploaded_file_ids,
+                "hdfs_upload": upload_result,
+                "message": "批量上传完成",
+            }
+        )
 
-        return {
-
-            "status": "success",
-
-            "total_files": len(files),
-
-            "uploaded_file_ids": uploaded_file_ids,
-
-            "hdfs_upload": upload_result,
-
-            "message": f"成功上传 {len(files)} 个文�?其中 {upload_result['success_count']} 个已上传到HDFS"
-
-        }
-
-        
-
+    except HTTPException:
+        raise
     except Exception as e:
-
-        logger.error(f"批量上传失败: {e}")
-
-        raise HTTPException(status_code=500, detail=f"批量上传失败: {str(e)}")
+        logger.error("批量上传失败: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"批量上传失败: {e}")
 
 
+def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_hadoop: bool) -> None:
+    """
+    在后台线程中执行 Hadoop 处理并触发 Celery 任务
+    """
+    from backend.hadoop_service import get_hadoop_service  # 局部导入避免循环
+    from backend.celery_service import get_celery_service
 
+    globals_ = _get_app_globals()
+    tasks = globals_["tasks"]
+    TaskStatus = globals_["TaskStatus"]
+
+    try:
+        if task_id not in tasks:
+            logger.warning("任务不存在: %s", task_id)
+            return
+
+        if not use_hadoop:
+            tasks[task_id]["status"] = TaskStatus.FAILED
+            tasks[task_id]["message"] = "当前仅支持 use_hadoop=True"
+            tasks[task_id]["progress"] = 100
+            return
+
+        tasks[task_id]["message"] = "正在执行 Hadoop 处理"
+        tasks[task_id]["progress"] = 10
+
+        hadoop_service = get_hadoop_service()
+        hadoop_result = hadoop_service.process_files_with_hadoop(file_ids)
+        tasks[task_id]["hadoop_result"] = hadoop_result
+
+        if not hadoop_result.get("success"):
+            tasks[task_id]["status"] = TaskStatus.FAILED
+            tasks[task_id]["message"] = f"Hadoop 处理失败: {hadoop_result.get('error')}"
+            tasks[task_id]["progress"] = 100
+            return
+
+        tasks[task_id]["message"] = "Hadoop 处理完成, 正在提交 Celery 任务"
+        tasks[task_id]["progress"] = 60
+
+        final_output = hadoop_result.get("final_output")
+        if not final_output:
+            tasks[task_id]["status"] = TaskStatus.FAILED
+            tasks[task_id]["message"] = "Hadoop 处理未返回有效的输出路径"
+            tasks[task_id]["progress"] = 100
+            return
+
+        celery_service = get_celery_service()
+        # 这里将多个 file_id 以逗号拼接传给 Celery, 具体含义由 Celery 任务内部解释
+        submit_result = celery_service.submit_chunk_processing_task(
+            hdfs_path=final_output,
+            file_id=",".join(file_ids),
+            task_id=task_id,
+        )
+
+        tasks[task_id]["celery_task_id"] = submit_result.get("celery_task_id")
+        tasks[task_id]["message"] = submit_result.get("message", "Celery 任务已提交")
+        tasks[task_id]["progress"] = 70
+        # 后续 Celery 完成后, 前端可通过 /status 接口轮询结果
+
+    except Exception as e:  # pragma: no cover - 日志用途
+        logger.error("后台任务执行失败: %s", e, exc_info=True)
+        if task_id in tasks:
+            tasks[task_id]["status"] = TaskStatus.FAILED
+            tasks[task_id]["message"] = f"后台任务执行失败: {e}"
+            tasks[task_id]["progress"] = 100
 
 
 @router.post("/build/batch")
-
 async def batch_build_kg(request: BatchBuildRequest):
-
     """
+    批量触发 Hadoop + Celery 构建知识图谱 (异步任务)
 
-    批量构建知识图谱(使用Hadoop和Celery)- 异步方式
-
-    
-
-    流程:
-
-    1. 立即返回任务ID
-
-    2. 在后台线程中执行:
-
-       - 上传文件到HDFS(如果还未上传)
-
-       - 触发Hadoop MapReduce任务(PDF提取,清洗,分块)
-
-       - 提交Celery任务处理文本�?
-
+    步骤:
+    1. 创建任务ID, 在内存中初始化任务状态
+    2. 启动后台线程:
+       - 使用 Hadoop 进行 PDF 提取 / 文本清洗 / 文本分块
+       - 使用 Celery 从 HDFS 下载文本块并构建知识图谱
+    3. 立即返回 task_id, 前端通过 /status 接口轮询任务状态
     """
-
-    try:
-
-        # 导入 app 模块中的全局变量(延迟导入避免循环)
-
-        import backend.app as app_module
-
-        uploaded_files = app_module.uploaded_files
-
-        tasks = app_module.tasks
-
-        TaskStatus = app_module.TaskStatus
-
-        
-
-        file_ids = request.file_ids
-
-        use_hadoop = request.use_hadoop
-
-        
-
-        if not file_ids:
-
-            raise HTTPException(status_code=400, detail="文件ID列表不能为空")
-
-        
-
-        # 生成任务ID
-
-        task_id = str(uuid.uuid4())
-
-        
-
-        # 初始化任务信�?
-
-        tasks[task_id] = {
-
-            "status": TaskStatus.PROCESSING,
-
-            "progress": 5,
-
-            "current_chunk": 0,
-
-            "total_chunks": 0,
-
-            "entities_created": 0,
-
-            "relations_created": 0,
-
-            "message": "任务已创�?正在初始�?,
-
-            "current_processing": "初始�?,
-
-            "file_ids": file_ids,
-
-            "use_hadoop": use_hadoop,
-
-            "hadoop_result": None,
-
-            "celery_task_id": None
-
-        }
-
-        
-
-        if use_hadoop:
-
-            # 在后台线程中执行 Hadoop 处理
-
-            import threading
-
-            
-
-            def process_hadoop_background():
-
-                """后台处理 Hadoop 任务"""
-
-                try:
-
-                    hadoop_service = get_hadoop_service()
-
-                    
-
-                    # 更新状�?
-
-                    tasks[task_id]["progress"] = 10
-
-                    tasks[task_id]["message"] = "开始上传文件到 HDFS"
-
-                    tasks[task_id]["current_processing"] = "上传文件到HDFS"
-
-                    
-
-                    # 1. 确保文件已上传到 HDFS
-
-                    file_paths = []
-
-                    for file_id in file_ids:
-
-                        if file_id not in uploaded_files:
-
-                            logger.warning(f"文件不存�? {file_id}")
-
-                            continue
-
-                        
-
-                        file_info = uploaded_files[file_id]
-
-                        file_paths.append({
-
-                            "file_id": file_id,
-
-                            "local_path": file_info["path"],
-
-                            "filename": file_info["filename"]
-
-                        })
-
-                    
-
-                    # 上传�?HDFS
-
-                    upload_result = hadoop_service.upload_files_to_hdfs(file_paths)
-
-                    
-
-                    # 检查上传结�?upload_files_to_hdfs 返回的是包含 success_count �?failed_count 的字�?
-
-                    if upload_result.get("failed_count", 0) > 0:
-
-                        error_msg = f"部分文件上传失败: {upload_result.get('failed_count', 0)} 个文件失�?
-
-                        if upload_result.get("failed_files"):
-
-                            error_details = ", ".join([f.get("filename", "未知文件") for f in upload_result["failed_files"]])
-
-                            error_msg += f" ({error_details})"
-
-                        tasks[task_id]["status"] = TaskStatus.FAILED
-
-                        tasks[task_id]["message"] = error_msg
-
-                        logger.error(f"任务 {task_id} 文件上传失败: {error_msg}")
-
-                        return
-
-                    
-
-                    if upload_result.get("success_count", 0) == 0:
-
-                        tasks[task_id]["status"] = TaskStatus.FAILED
-
-                        tasks[task_id]["message"] = "所有文件上传到HDFS失败"
-
-                        logger.error(f"任务 {task_id} 所有文件上传失�?)
-
-                        return
-
-                    
-
-                    # 更新状�?
-
-                    tasks[task_id]["progress"] = 20
-
-                    tasks[task_id]["message"] = "文件上传完成,开�?Hadoop 处理"
-
-                    tasks[task_id]["current_processing"] = "Hadoop MapReduce处理"
-
-                    
-
-                    # 2. 触发 Hadoop MapReduce 任务
-
-                    hadoop_result = hadoop_service.process_files_with_hadoop(file_ids)
-
-                    tasks[task_id]["hadoop_result"] = hadoop_result
-
-                    
-
-                    # 3. 提交 Celery 任务
-
-                    if hadoop_result.get("success") and hadoop_result.get("final_output"):
-
-                        tasks[task_id]["progress"] = 50
-
-                        tasks[task_id]["message"] = "Hadoop处理完成,提交Celery任务"
-
-                        tasks[task_id]["current_processing"] = "提交Celery任务"
-
-                        
-
-                        celery_service = get_celery_service()
-
-                        celery_result = celery_service.submit_chunk_processing_task(
-
-                            hdfs_path=hadoop_result["final_output"],
-
-                            file_id=file_ids[0],  # 使用第一个文件ID作为标识
-
-                            task_id=task_id
-
-                        )
-
-                        
-
-                        tasks[task_id]["celery_task_id"] = celery_result.get("celery_task_id")
-
-                        tasks[task_id]["progress"] = 60
-
-                        tasks[task_id]["message"] = "Celery任务已提�?正在处理文本�?
-
-                        tasks[task_id]["current_processing"] = "Celery处理�?
-
-                    else:
-
-                        tasks[task_id]["status"] = TaskStatus.FAILED
-
-                        tasks[task_id]["message"] = f"Hadoop处理失败: {hadoop_result.get('error', '未知错误')}"
-
-                        tasks[task_id]["progress"] = 100
-
-                except Exception as e:
-
-                    logger.error(f"后台处理 Hadoop 任务失败: {e}", exc_info=True)
-
-                    tasks[task_id]["status"] = TaskStatus.FAILED
-
-                    tasks[task_id]["message"] = f"处理失败: {str(e)}"
-
-                    tasks[task_id]["progress"] = 100
-
-            
-
-            # 启动后台线程
-
-            thread = threading.Thread(target=process_hadoop_background, daemon=True)
-
-            thread.start()
-
-            
-
-            # 立即返回任务ID
-
-            return {
-
-                "status": "success",
-
-                "task_id": task_id,
-
-                "message": "批量构建任务已启�?请通过 /api/hadoop/task/{task_id}/status 查询进度"
-
-            }
-
-        else:
-
-            # 不使�?Hadoop,使用原有方式(单个文件处理)
-
-            tasks[task_id]["status"] = TaskStatus.FAILED
-
-            tasks[task_id]["message"] = "未使用Hadoop模式,请使用原有接�?
-
-            return {
-
-                "status": "error",
-
-                "task_id": task_id,
-
-                "error": "请使用原有接口处理单个文�?或设置use_hadoop=true"
-
-            }
-
-        
-
-    except Exception as e:
-
-        logger.error(f"批量构建知识图谱失败: {e}")
-
-        raise HTTPException(status_code=500, detail=f"批量构建失败: {str(e)}")
-
-
-
-
-
-@router.get("/task/{task_id}/status")
-
-async def get_hadoop_task_status(task_id: str):
-
-    """
-
-    获取 Hadoop + Celery 任务状�?
-
-    
-
-    合并查询 Hadoop �?Celery 任务状�?
-
-    """
-
-    try:
-
-        # 导入 app 模块中的全局变量(延迟导入避免循环)
-
-        import backend.app as app_module
-
-        tasks = app_module.tasks
-
-        TaskStatus = app_module.TaskStatus
-
-        
-
-        # 从内存任务中获取信息
-
-        task_info = tasks.get(task_id, {})
-
-        
-
-        # 如果任务中有 Celery 任务ID,查询 Celery 状�?
-
-        celery_task_id = task_info.get("celery_task_id")
-
-        celery_status = None
-
-        
-
-        if celery_task_id:
-
-            celery_service = get_celery_service()
-
-            celery_status = celery_service.get_task_status(celery_task_id)
-
-        
-
-        # 合并状�?
-
-        result = {
-
+    globals_ = _get_app_globals()
+    uploaded_files = globals_["uploaded_files"]
+    tasks = globals_["tasks"]
+    TaskStatus = globals_["TaskStatus"]
+
+    file_ids = request.file_ids or []
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="文件ID列表不能为空")
+
+    # 校验文件是否存在
+    missing = [fid for fid in file_ids if fid not in uploaded_files]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"以下文件ID不存在或尚未上传: {', '.join(missing)}",
+        )
+
+    # 生成任务 ID
+    task_id = str(uuid.uuid4())
+
+    # 初始化任务信息
+    tasks[task_id] = {
+        "status": TaskStatus.PROCESSING,
+        "progress": 5,
+        "current_chunk": 0,
+        "total_chunks": 0,
+        "entities_created": 0,
+        "relations_created": 0,
+        "message": "任务已创建,正在初始化",
+        "current_processing": "初始化",
+        "file_ids": file_ids,
+        "use_hadoop": request.use_hadoop,
+        "hadoop_result": None,
+        "celery_task_id": None,
+    }
+
+    # 启动后台线程执行实际任务
+    thread = threading.Thread(
+        target=_run_hadoop_and_celery_in_background,
+        args=(task_id, file_ids, request.use_hadoop),
+        daemon=True,
+    )
+    thread.start()
+
+    return JSONResponse(
+        {
+            "status": "accepted",
             "task_id": task_id,
-
-            "status": task_info.get("status", "unknown"),
-
-            "progress": task_info.get("progress", 0),
-
-            "message": task_info.get("message", ""),
-
-            "current_processing": task_info.get("current_processing", ""),
-
-            "hadoop_status": "completed" if task_info.get("use_hadoop") else "not_used",
-
-            "celery_status": celery_status
-
+            "message": "批量构建任务已创建,正在后台执行",
         }
+    )
 
-        
 
-        return {
+@router.get("/status/{task_id}")
+async def get_batch_task_status(task_id: str):
+    """
+    查询批量构建任务状态
 
-            "status": "success",
+    返回内容:
+    - 基础任务信息(来自 backend.app.tasks)
+    - 如果存在 Celery 任务, 额外返回 celery_status
+    """
+    globals_ = _get_app_globals()
+    tasks = globals_["tasks"]
 
-            "data": result
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
 
-        }
+    response: Dict[str, Any] = {"task_id": task_id, "task": task}
 
-        
+    celery_task_id = task.get("celery_task_id")
+    if celery_task_id:
+        try:
+            celery_service = get_celery_service()
+            celery_status = celery_service.get_task_status(celery_task_id)
+            response["celery_status"] = celery_status
+        except Exception as e:  # pragma: no cover - 日志用途
+            logger.error("获取 Celery 任务状态失败: %s", e)
+            response["celery_status_error"] = str(e)
 
-    except Exception as e:
+    return JSONResponse(response)
 
-        logger.error(f"获取任务状态失�? {task_id}, 错误: {e}")
 
-        raise HTTPException(status_code=500, detail=f"获取任务状态失�? {str(e)}")
+@router.get("/tasks")
+async def list_batch_tasks():
+    """
+    简要列出所有 Hadoop 批量任务
+    """
+    globals_ = _get_app_globals()
+    tasks = globals_["tasks"]
+
+    summary = []
+    for task_id, info in tasks.items():
+        summary.append(
+            {
+                "task_id": task_id,
+                "status": info.get("status"),
+                "progress": info.get("progress"),
+                "message": info.get("message"),
+                "file_ids": info.get("file_ids"),
+            }
+        )
+
+    return JSONResponse({"tasks": summary})
+
+
+

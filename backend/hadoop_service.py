@@ -47,6 +47,7 @@ class HadoopService:
             # 上传到 HDFS
             hdfs_path = f"{self.hdfs_root}/uploads/{filename}"
             cmd = [
+                "docker", "exec", "hadoop-namenode",
                 "hadoop", "fs", "-put",
                 "-f", tmp_path, hdfs_path
             ]
@@ -103,11 +104,14 @@ class HadoopService:
                 hdfs_path = f"{self.hdfs_root}/uploads/{file_id}/{filename}"
                 
                 # 确保 HDFS 目录存在
-                dir_cmd = ["hadoop", "fs", "-mkdir", "-p", f"{self.hdfs_root}/uploads/{file_id}"]
+                dir_cmd = [ "docker", "exec", "hadoop-namenode","hadoop", "fs", "-mkdir", "-p", f"{self.hdfs_root}/uploads/{file_id}"]
                 subprocess.run(dir_cmd, capture_output=True, timeout=30)
                 
                 # 上传文件
-                cmd = ["hadoop", "fs", "-put", "-f", local_path, hdfs_path]
+                cmd = [
+                    "docker", "exec", "hadoop-namenode",
+                    "hadoop", "fs", "-put", "-f", local_path, hdfs_path
+                ]
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
@@ -283,7 +287,7 @@ class HadoopService:
             
             # 删除已存在的输出目录
             subprocess.run(
-                ["hadoop", "fs", "-rm", "-r", "-f", output_path],
+                [ "docker", "exec", "hadoop-namenode","hadoop", "fs", "-rm", "-r", "-f", output_path],
                 capture_output=True,
                 timeout=30
             )
@@ -295,7 +299,7 @@ class HadoopService:
                 reducer_hdfs = self._upload_script_to_hdfs(reducer)
             
             # 构建命令
-            cmd = [
+            cmd = [ "docker", "exec", "hadoop-namenode",
                 "hadoop", "jar",
                 f"{self.hadoop_home}/share/hadoop/tools/lib/hadoop-streaming-3.2.1.jar",
                 "-input", input_path,
@@ -363,14 +367,17 @@ class HadoopService:
         
         # 确保目录存在
         subprocess.run(
-            ["hadoop", "fs", "-mkdir", "-p", f"{self.hdfs_root}/scripts"],
+            [ "docker", "exec", "hadoop-namenode","hadoop", "fs", "-mkdir", "-p", f"{self.hdfs_root}/scripts"],
             capture_output=True,
             timeout=30
         )
         
         # 上传脚本
         subprocess.run(
-            ["hadoop", "fs", "-put", "-f", script_path, hdfs_path],
+            [
+                "docker", "exec", "hadoop-namenode",
+                "hadoop", "fs", "-put", "-f", script_path, hdfs_path
+            ],
             capture_output=True,
             text=True,
             timeout=60
@@ -392,4 +399,5 @@ def get_hadoop_service() -> HadoopService:
         _hadoop_service_instance = HadoopService()
     
     return _hadoop_service_instance
+
 

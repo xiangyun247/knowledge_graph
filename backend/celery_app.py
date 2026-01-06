@@ -37,3 +37,5 @@ celery_app.conf.update(
 
 logger.info(f"Celery 应用初始化完成,Redis: {redis_url}")
 
+
+
