@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <configuration>
+    <!-- HDFS 默认文件系统，始终指向 NameNode -->
     <property>
         <name>fs.defaultFS</name>
-        <value>hdfs://hadoop-namenode:9000</value>
+        <value>hdfs://hadoop-namenode:8020</value>
     </property>
+
+    <!-- 允许后端以 root 身份代理访问 HDFS（批量上传时需要） -->
     <property>
         <name>hadoop.proxyuser.root.hosts</name>
         <value>*</value>
@@ -13,11 +16,4 @@
         <name>hadoop.proxyuser.root.groups</name>
         <value>*</value>
     </property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-namenode:8020</value></property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-datanode:8020</value></property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-namenode:8020</value></property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-datanode:8020</value></property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-namenode:8020</value></property>
-<property><name>fs.defaultFS</name><value>hdfs://hadoop-datanode:8020</value></property>
 </configuration>
-

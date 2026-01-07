@@ -115,7 +115,7 @@ hadoop jar hadoop-streaming.jar \
 from hadoop.utils.hdfs_client import HDFSClient
 
 # 创建客户端
-hdfs = HDFSClient(host="localhost", port=9000)
+hdfs = HDFSClient(host="localhost", port=8020)  # Hadoop 3.x 使用 8020 端口
 
 # 上传文件
 hdfs.upload_file("/local/file.pdf", "/hdfs/file.pdf")

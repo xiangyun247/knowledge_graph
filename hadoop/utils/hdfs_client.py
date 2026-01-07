@@ -26,22 +26,44 @@ except ImportError:
 class HDFSClient:
     """HDFS 客户端封装类"""
     
-    def __init__(self, host: str = "localhost", port: int = 9000):
+    def __init__(self, host: str = "localhost", port: int = 8020, use_docker: bool = True):
         """
         初始化 HDFS 客户端
         
         Args:
             host: HDFS NameNode 主机地址
-            port: HDFS 端口（默认 9000）
+            port: HDFS 端口（默认 8020，Hadoop 3.x 默认 RPC 端口）
+            use_docker: 是否使用 Docker 方式访问（默认 True，适合容器化环境）
         """
         self.host = host
         self.port = port
+        self.use_docker = use_docker
         self.hdfs = None
+        self.container_name = "hadoop-namenode"  # Docker 容器名称
         
+        # 在 Docker 环境下，优先使用 docker exec 方式
+        if use_docker:
+            # 检查容器是否存在
+            try:
+                result = subprocess.run(
+                    ["docker", "ps", "--filter", f"name={self.container_name}", "--format", "{{.Names}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if self.container_name in result.stdout:
+                    logger.info(f"HDFS 客户端使用 Docker 方式: {self.container_name}")
+                    return
+                else:
+                    logger.warning(f"Docker 容器 {self.container_name} 未运行，尝试其他方式")
+            except Exception as e:
+                logger.warning(f"检查 Docker 容器失败: {e}，尝试其他方式")
+        
+        # 非 Docker 环境或 Docker 不可用时，尝试 hdfs3 库
         if HDFS3_AVAILABLE:
             try:
                 self.hdfs = HDFileSystem(host=host, port=port)
-                logger.info(f"HDFS 客户端初始化成功: {host}:{port}")
+                logger.info(f"HDFS 客户端初始化成功 (hdfs3): {host}:{port}")
             except Exception as e:
                 logger.error(f"HDFS 客户端初始化失败: {e}")
                 self.hdfs = None
@@ -60,7 +82,45 @@ class HDFSClient:
             是否成功
         """
         try:
-            if self.hdfs:
+            if self.use_docker and self.container_name:
+                # 使用 Docker 方式：先将文件复制到容器，再上传
+                import tempfile
+                import os
+                
+                # 先复制到容器临时目录
+                container_temp = f"/tmp/{os.path.basename(local_path)}"
+                copy_result = subprocess.run(
+                    ["docker", "cp", local_path, f"{self.container_name}:{container_temp}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                
+                if copy_result.returncode != 0:
+                    logger.error(f"复制文件到容器失败: {copy_result.stderr}")
+                    return False
+                
+                # 从容器内上传到 HDFS
+                cmd = [
+                    "docker", "exec", self.container_name,
+                    "hadoop", "fs", "-put", "-f", container_temp, hdfs_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                # 清理临时文件
+                subprocess.run(
+                    ["docker", "exec", self.container_name, "rm", "-f", container_temp],
+                    capture_output=True,
+                    timeout=10
+                )
+                
+                if result.returncode == 0:
+                    logger.info(f"文件上传成功: {local_path} -> {hdfs_path}")
+                    return True
+                else:
+                    logger.error(f"文件上传失败: {result.stderr}")
+                    return False
+            elif self.hdfs:
                 # 使用 hdfs3 库
                 self.hdfs.put(local_path, hdfs_path)
                 logger.info(f"文件上传成功: {local_path} -> {hdfs_path}")
@@ -96,6 +156,43 @@ class HDFSClient:
                 self.hdfs.get(hdfs_path, local_path)
                 logger.info(f"文件下载成功: {hdfs_path} -> {local_path}")
                 return True
+            elif self.use_docker and self.container_name:
+                # 使用 Docker 方式：先下载到容器临时目录，再复制出来
+                import tempfile
+                import os
+                
+                container_temp = f"/tmp/{os.path.basename(local_path)}"
+                cmd = [
+                    "docker", "exec", self.container_name,
+                    "hadoop", "fs", "-get", hdfs_path, container_temp
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    # 从容器复制到本地
+                    copy_result = subprocess.run(
+                        ["docker", "cp", f"{self.container_name}:{container_temp}", local_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    
+                    # 清理容器临时文件
+                    subprocess.run(
+                        ["docker", "exec", self.container_name, "rm", "-f", container_temp],
+                        capture_output=True,
+                        timeout=10
+                    )
+                    
+                    if copy_result.returncode == 0:
+                        logger.info(f"文件下载成功: {hdfs_path} -> {local_path}")
+                        return True
+                    else:
+                        logger.error(f"从容器复制文件失败: {copy_result.stderr}")
+                        return False
+                else:
+                    logger.error(f"文件下载失败: {result.stderr}")
+                    return False
             else:
                 # 使用命令行方式
                 cmd = f"hdfs dfs -get {hdfs_path} {local_path}"

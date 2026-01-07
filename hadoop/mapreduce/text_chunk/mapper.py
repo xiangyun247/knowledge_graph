@@ -72,28 +72,28 @@ def mapper():
             # 分割文件路径和文本内容
             parts = line.split('\t', 1)
             if len(parts) < 2:
-                logger.warning(f"输入格式错误，跳过: {line}")
+                logger.warning("输入格式错误，跳过: {}".format(line))
                 continue
             
             file_path = parts[0]
             text = parts[1]
             
-            logger.info(f"分块处理: {file_path}")
+            logger.info("分块处理: {}".format(file_path))
             
             # 分块
             chunks = split_into_chunks(text, chunk_size=1000)
             
             # 输出：文件路径_块编号 \t 文本块
             for i, chunk in enumerate(chunks):
-                chunk_key = f"{file_path}_chunk_{i}"
-                output = f"{chunk_key}\t{chunk}"
+                chunk_key = "{}_chunk_{}".format(file_path, i)
+                output = "{}\t{}".format(chunk_key, chunk)
                 print(output)
             
-            logger.info(f"文件 {file_path} 分为 {len(chunks)} 块")
+            logger.info("文件 {} 分为 {} 块".format(file_path, len(chunks)))
             
     except Exception as e:
-        logger.error(f"Mapper 执行出错: {e}")
-        sys.stderr.write(f"ERROR: {e}\n")
+        logger.error("Mapper 执行出错: {}".format(e))
+        sys.stderr.write("ERROR: {}\n".format(e))
         sys.exit(1)
 
 

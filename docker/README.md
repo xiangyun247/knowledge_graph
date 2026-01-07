@@ -4,9 +4,11 @@
 
 ```
 docker/
-├── Dockerfile.backend    # 后端服务 Dockerfile
-├── Dockerfile.celery     # Celery Worker Dockerfile
-└── .dockerignore         # Docker 构建忽略文件
+├── Dockerfile.backend              # 后端服务 Dockerfile
+├── Dockerfile.celery               # Celery Worker Dockerfile
+├── Dockerfile.hadoop-python        # Hadoop NameNode（带 Python 支持）
+├── Dockerfile.hadoop-datanode-python  # Hadoop DataNode（带 Python 支持）
+└── .dockerignore                   # Docker 构建忽略文件
 ```
 
 ## 🐳 Dockerfile 说明
@@ -23,6 +25,22 @@ docker/
 - 包含 Celery 和 Redis 依赖
 - 用于异步任务处理
 
+### Dockerfile.hadoop-python
+- 扩展 Hadoop NameNode 镜像
+- 基于 `bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8`
+- 添加 Python 3.5.3 和 pip3
+- 安装 pdfplumber 0.5.0（兼容 Python 3.5）
+- 安装 ImageMagick（pdfplumber 依赖）
+- 用于运行 MapReduce Python 脚本
+
+### Dockerfile.hadoop-datanode-python
+- 扩展 Hadoop DataNode 镜像
+- 基于 `bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8`
+- 添加 Python 3.5.3 和 pip3
+- 安装 pdfplumber 0.5.0（兼容 Python 3.5）
+- 安装 ImageMagick（pdfplumber 依赖）
+- 用于运行 MapReduce Python 脚本
+
 ## 🚀 使用方法
 
 ### 构建镜像
@@ -33,7 +51,15 @@ docker build -f docker/Dockerfile.backend -t kg-backend .
 
 # 构建 Celery 镜像
 docker build -f docker/Dockerfile.celery -t kg-celery .
+
+# 构建 Hadoop NameNode 镜像（带 Python 支持）
+docker build -f docker/Dockerfile.hadoop-python -t hadoop-namenode-python .
+
+# 构建 Hadoop DataNode 镜像（带 Python 支持）
+docker build -f docker/Dockerfile.hadoop-datanode-python -t hadoop-datanode-python .
 ```
+
+**注意：** 使用 `docker-compose up` 时会自动构建这些镜像。
 
 ### 使用 Docker Compose（推荐）
 

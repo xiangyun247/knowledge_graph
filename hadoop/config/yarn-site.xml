@@ -1,41 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <configuration>
+    <!-- 绑定地址 -->
+    <property>
+        <name>yarn.resourcemanager.bind-host</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>yarn.nodemanager.bind-host</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>yarn.timeline-service.bind-host</name>
+        <value>0.0.0.0</value>
+    </property>
+
+    <!-- ResourceManager 主机和端口 -->
     <property>
         <name>yarn.resourcemanager.hostname</name>
         <value>hadoop-resourcemanager</value>
     </property>
     <property>
+        <name>yarn.resourcemanager.address</name>
+        <value>hadoop-resourcemanager:8032</value>
+    </property>
+
+    <!-- 开启 MapReduce shuffle 辅助服务（关键修复） -->
+    <property>
         <name>yarn.nodemanager.aux-services</name>
         <value>mapreduce_shuffle</value>
     </property>
     <property>
-        <name>yarn.nodemanager.env-whitelist</name>
-        <value>JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,CLASSPATH_PREPEND_DISTCACHE,HADOOP_YARN_HOME,HADOOP_MAPRED_HOME</value>
+        <name>yarn.nodemanager.aux-services.mapreduce_shuffle.class</name>
+        <value>org.apache.hadoop.mapred.ShuffleHandler</value>
     </property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.resourcemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.timeline-service.bind-host</name><value>0.0.0.0</value></property>
 </configuration>
-

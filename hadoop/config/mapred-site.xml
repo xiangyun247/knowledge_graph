@@ -1,23 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
 <configuration>
+    <!-- 使用 YARN 作为 MapReduce 框架 -->
     <property>
         <name>mapreduce.framework.name</name>
         <value>yarn</value>
     </property>
-    <property>
-        <name>mapreduce.jobhistory.address</name>
-        <value>hadoop-historyserver:10020</value>
-    </property>
-    <property>
-        <name>mapreduce.jobhistory.webapp.address</name>
-        <value>hadoop-historyserver:19888</value>
-    </property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-<property><name>yarn.nodemanager.bind-host</name><value>0.0.0.0</value></property>
-</configuration>
 
+    <!-- 让 MRAppMaster 和各个 Task 知道 Hadoop 安装目录，用于加载 mapreduce 相关类 -->
+    <property>
+        <name>yarn.app.mapreduce.am.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1</value>
+    </property>
+
+    <property>
+        <name>mapreduce.map.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1</value>
+    </property>
+
+    <property>
+        <name>mapreduce.reduce.env</name>
+        <value>HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1</value>
+    </property>
+</configuration>

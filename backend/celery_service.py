@@ -36,18 +36,20 @@ class CeleryService:
     ) -> Dict[str, Any]:
         """
         提交文本块处理任务
-        
-        Args:
-            hdfs_path: HDFS 中的文本块目录路径
-            file_id: 文件 ID
-            task_id: 任务 ID
-            
-        Returns:
-            任务提交结果
+
+        如果 Celery 任务未正确初始化（例如在本地测试环境没有启动 Celery Worker），
+        不再抛出异常，而是返回一个标记为 failed 的结果，交由上层根据需要决定是否视为致命错误。
+        这样可以避免像测试脚本中那样整个后台任务直接失败。
         """
         if not self.download_and_process_chunks:
-            raise Exception("Celery 任务未初始化")
-        
+            msg = "Celery 任务未初始化，已跳过知识图谱构建"
+            logger.error(msg)
+            return {
+                "success": False,
+                "celery_task_id": None,
+                "message": msg,
+            }
+
         try:
             # 提交任务
             result = self.download_and_process_chunks.delay(
@@ -112,12 +114,19 @@ def get_celery_service() -> CeleryService:
     获取 Celery 服务实例(单例模式)
     
     Returns:
-        CeleryService 实例
+        CeleryService 实例（即使初始化失败也会返回一个实例，不会抛出异常）
     """
     global _celery_service_instance
     
     if _celery_service_instance is None:
-        _celery_service_instance = CeleryService()
+        try:
+            _celery_service_instance = CeleryService()
+        except Exception as e:
+            # 即使初始化失败，也返回一个实例，避免抛出异常
+            logger.error(f"Celery 服务初始化失败，返回空实例: {e}")
+            _celery_service_instance = CeleryService.__new__(CeleryService)
+            _celery_service_instance.celery_app = None
+            _celery_service_instance.download_and_process_chunks = None
     
     return _celery_service_instance
 

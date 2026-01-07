@@ -400,9 +400,9 @@ def download_and_process_chunks(
 
         # 创建 HDFS 客户�?
 
-        hdfs_host = os.getenv("HADOOP_NAMENODE", "localhost:9000").split(":")[0]
+        hdfs_host = os.getenv("HADOOP_NAMENODE", "localhost:8020").split(":")[0]
 
-        hdfs_port = int(os.getenv("HADOOP_NAMENODE", "localhost:9000").split(":")[1] if ":" in os.getenv("HADOOP_NAMENODE", "localhost:9000") else "9000")
+        hdfs_port = int(os.getenv("HADOOP_NAMENODE", "localhost:8020").split(":")[1] if ":" in os.getenv("HADOOP_NAMENODE", "localhost:8020") else "8020")
 
         hdfs_client = HDFSClient(host=hdfs_host, port=hdfs_port)
 

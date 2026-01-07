@@ -25,7 +25,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.hadoop_service import get_hadoop_service
-from backend.celery_service import get_celery_service
+# 暂时移除 Celery 导入，避免模块加载时触发异常
+# from backend.celery_service import get_celery_service
 
 logger = logging.getLogger(__name__)
 
@@ -160,10 +161,11 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
 
 def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_hadoop: bool) -> None:
     """
-    在后台线程中执行 Hadoop 处理并触发 Celery 任务
+    在后台线程中执行 Hadoop 处理
+    
+    注意：当前版本仅执行 Hadoop 处理，不包含 Celery 任务
     """
     from backend.hadoop_service import get_hadoop_service  # 局部导入避免循环
-    from backend.celery_service import get_celery_service
 
     globals_ = _get_app_globals()
     tasks = globals_["tasks"]
@@ -193,9 +195,7 @@ def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_
             tasks[task_id]["progress"] = 100
             return
 
-        tasks[task_id]["message"] = "Hadoop 处理完成, 正在提交 Celery 任务"
-        tasks[task_id]["progress"] = 60
-
+        # Hadoop 处理成功，标记为完成
         final_output = hadoop_result.get("final_output")
         if not final_output:
             tasks[task_id]["status"] = TaskStatus.FAILED
@@ -203,21 +203,16 @@ def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_
             tasks[task_id]["progress"] = 100
             return
 
-        celery_service = get_celery_service()
-        # 这里将多个 file_id 以逗号拼接传给 Celery, 具体含义由 Celery 任务内部解释
-        submit_result = celery_service.submit_chunk_processing_task(
-            hdfs_path=final_output,
-            file_id=",".join(file_ids),
-            task_id=task_id,
-        )
+        tasks[task_id]["status"] = TaskStatus.COMPLETED
+        tasks[task_id]["message"] = "Hadoop 处理完成"
+        tasks[task_id]["progress"] = 100
+        tasks[task_id]["current_processing"] = "完成"
+        tasks[task_id]["hadoop_result"] = hadoop_result
+        logger.info(f"任务 {task_id} 完成: Hadoop 处理成功，输出路径: {final_output}")
 
-        tasks[task_id]["celery_task_id"] = submit_result.get("celery_task_id")
-        tasks[task_id]["message"] = submit_result.get("message", "Celery 任务已提交")
-        tasks[task_id]["progress"] = 70
-        # 后续 Celery 完成后, 前端可通过 /status 接口轮询结果
-
-    except Exception as e:  # pragma: no cover - 日志用途
-        logger.error("后台任务执行失败: %s", e, exc_info=True)
+    except Exception as e:
+        # 捕获所有异常，记录日志，并将任务标记为失败
+        logger.error(f"任务 {task_id} 执行失败: {e}", exc_info=True)
         if task_id in tasks:
             tasks[task_id]["status"] = TaskStatus.FAILED
             tasks[task_id]["message"] = f"后台任务执行失败: {e}"
@@ -307,15 +302,17 @@ async def get_batch_task_status(task_id: str):
 
     response: Dict[str, Any] = {"task_id": task_id, "task": task}
 
-    celery_task_id = task.get("celery_task_id")
-    if celery_task_id:
-        try:
-            celery_service = get_celery_service()
-            celery_status = celery_service.get_task_status(celery_task_id)
-            response["celery_status"] = celery_status
-        except Exception as e:  # pragma: no cover - 日志用途
-            logger.error("获取 Celery 任务状态失败: %s", e)
-            response["celery_status_error"] = str(e)
+    # 暂时禁用 Celery 状态查询
+    # celery_task_id = task.get("celery_task_id")
+    # if celery_task_id:
+    #     try:
+    #         from backend.celery_service import get_celery_service
+    #         celery_service = get_celery_service()
+    #         celery_status = celery_service.get_task_status(celery_task_id)
+    #         response["celery_status"] = celery_status
+    #     except Exception as e:  # pragma: no cover - 日志用途
+    #         logger.error("获取 Celery 任务状态失败: %s", e)
+    #         response["celery_status_error"] = str(e)
 
     return JSONResponse(response)
 

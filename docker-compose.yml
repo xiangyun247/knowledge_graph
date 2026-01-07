@@ -3,19 +3,24 @@ version: '3.8'
 services:
   # ==================== Hadoop 集群 ====================
   
-  # Hadoop NameNode
+  # Hadoop NameNode（使用自定义镜像，包含 Python 和 pdfplumber）
+  # 注意：此容器使用自定义 entrypoint，会在启动前自动清理重复配置
+  # 详见: docker/hadoop-entrypoint.sh 和 HADOOP_CONFIG_CLEANUP_SOLUTION.md
   hadoop-namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.hadoop-python
     container_name: hadoop-namenode
     hostname: hadoop-namenode
     ports:
       - "9870:9870"  # NameNode Web UI
-      - "9000:9000"  # HDFS 端口
+      - "9000:8020"  # HDFS 端口（外部:内部，Hadoop 3.x 使用 8020）
     environment:
       - CLUSTER_NAME=knowledge_graph
+      - HADOOP_CONF_DIR=/hadoop/conf
     volumes:
       - namenode_data:/hadoop/dfs/name
-      - ./hadoop/config:/etc/hadoop
+      - ./hadoop/config:/hadoop/conf:ro
     networks:
       - kg-network
     healthcheck:
@@ -25,18 +30,23 @@ services:
       retries: 3
       start_period: 60s
 
-  # Hadoop DataNode
+  # Hadoop DataNode（使用自定义镜像，包含 Python 和 pdfplumber）
+  # 注意：此容器使用自定义 entrypoint，会在启动前自动清理重复配置
+  # 详见: docker/hadoop-entrypoint.sh 和 HADOOP_CONFIG_CLEANUP_SOLUTION.md
   hadoop-datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.hadoop-datanode-python
     container_name: hadoop-datanode
     hostname: hadoop-datanode
     ports:
       - "9864:9864"  # DataNode Web UI
     environment:
       - SERVICE_PRECONDITION=hadoop-namenode:9870
+      - HADOOP_CONF_DIR=/hadoop/conf
     volumes:
       - datanode_data:/hadoop/dfs/data
-      - ./hadoop/config:/etc/hadoop
+      - ./hadoop/config:/hadoop/conf:ro
     networks:
       - kg-network
     depends_on:
@@ -44,6 +54,8 @@ services:
         condition: service_healthy
 
   # Hadoop ResourceManager
+  # 注意：此容器使用官方镜像，entrypoint 脚本会在启动时追加配置
+  # 如果发现重复配置，运行: python scripts/auto_clean_hadoop_configs.py
   hadoop-resourcemanager:
     image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
     container_name: hadoop-resourcemanager
@@ -52,6 +64,9 @@ services:
       - "8088:8088"  # YARN Web UI
     environment:
       - SERVICE_PRECONDITION=hadoop-namenode:9870
+      - HADOOP_CONF_DIR=/hadoop/conf
+    volumes:
+      - ./hadoop/config:/hadoop/conf:ro # 挂载配置文件以便清理脚本访问
     networks:
       - kg-network
     depends_on:
@@ -59,19 +74,28 @@ services:
         condition: service_healthy
 
   # Hadoop NodeManager
+  # 注意：此容器使用官方镜像，entrypoint 脚本会在启动时追加配置
+  # 如果发现重复配置，运行: python scripts/auto_clean_hadoop_configs.py
   hadoop-nodemanager:
-    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.hadoop-nodemanager-python
     container_name: hadoop-nodemanager
     hostname: hadoop-nodemanager
     ports:
-      - "8042:8042"  # NodeManager Web UI
+      - "8042:8042"
     environment:
-      - SERVICE_PRECONDITION=hadoop-namenode:9870,hadoop-resourcemanager:8088
+      - SERVICE_PRECONDITION=hadoop-namenode:9870 hadoop-resourcemanager:8088
+      - HADOOP_CONF_DIR=/hadoop/conf
+    volumes:
+      - ./hadoop/config:/hadoop/conf:ro
     networks:
       - kg-network
     depends_on:
-      - hadoop-namenode
-      - hadoop-resourcemanager
+      hadoop-namenode:
+        condition: service_healthy
+      hadoop-resourcemanager:
+        condition: service_started
 
   # Hadoop HistoryServer（可选，用于查看任务历史）
   hadoop-historyserver:
@@ -181,7 +205,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       # Hadoop 配置
-      - HADOOP_NAMENODE=hadoop-namenode:9000
+      - HADOOP_NAMENODE=hadoop-namenode:8020
       - HADOOP_NAMENODE_UI=hadoop-namenode:9870
       # DeepSeek API（从 .env 文件读取，或在这里设置）
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
@@ -222,13 +246,13 @@ services:
       # Neo4j 配置
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=neo4j123
+      - NEO4J_PASSWORD=a2303548451
       - NEO4J_DATABASE=neo4j
       # Redis 配置
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       # Hadoop 配置
-      - HADOOP_NAMENODE=hadoop-namenode:9000
+      - HADOOP_NAMENODE=hadoop-namenode:8020
       # DeepSeek API
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}

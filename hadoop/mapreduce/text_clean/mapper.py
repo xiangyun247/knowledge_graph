@@ -157,24 +157,24 @@ def mapper():
             # 分割文件路径和文本内容
             parts = line.split('\t', 1)
             if len(parts) < 2:
-                logger.warning(f"输入格式错误，跳过: {line}")
+                logger.warning("输入格式错误，跳过: {}".format(line))
                 continue
             
             file_path = parts[0]
             raw_text = parts[1]
             
-            logger.info(f"清洗文本: {file_path}")
+            logger.info("清洗文本: {}".format(file_path))
             
             # 清洗文本
             cleaned_text = clean_medical_text(raw_text)
             
             # 输出：文件路径 \t 清洗后的文本
-            output = f"{file_path}\t{cleaned_text}"
+            output = "{}\t{}".format(file_path, cleaned_text)
             print(output)
             
     except Exception as e:
-        logger.error(f"Mapper 执行出错: {e}")
-        sys.stderr.write(f"ERROR: {e}\n")
+        logger.error("Mapper 执行出错: {}".format(e))
+        sys.stderr.write("ERROR: {}\n".format(e))
         sys.exit(1)
 
 
