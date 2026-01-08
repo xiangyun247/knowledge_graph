@@ -1,0 +1,40 @@
+{
+  "task_id": "8fde1db9-a87a-4d1a-a110-98fbd56adf5e",
+  "task": {
+    "status": "failed",
+    "progress": 100,
+    "current_chunk": 0,
+    "total_chunks": 0,
+    "entities_created": 0,
+    "relations_created": 0,
+    "message": "后台任务执行失败: Celery 任务未初始化",
+    "current_processing": "初始化",
+    "file_ids": [
+      "c0e567b3-76d2-4a79-b7ef-940cf7affd93",
+      "e0577eec-a621-490e-a277-1ec9991359cc"
+    ],
+    "use_hadoop": true,
+    "hadoop_result": {
+      "success": true,
+      "final_output": "/knowledge_graph/processed/text_chunk",
+      "stages": {
+        "pdf_extract": {
+          "success": true,
+          "output_path": "/knowledge_graph/processed/pdf_extract",
+          "job_id": null
+        },
+        "text_clean": {
+          "success": true,
+          "output_path": "/knowledge_graph/processed/text_clean",
+          "job_id": null
+        },
+        "text_chunk": {
+          "success": true,
+          "output_path": "/knowledge_graph/processed/text_chunk",
+          "job_id": null
+        }
+      }
+    },
+    "celery_task_id": null
+  }
+}

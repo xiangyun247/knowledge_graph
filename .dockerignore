@@ -1,0 +1,125 @@
+# Docker 构建上下文忽略文件
+
+# 大文件
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
+docker-images.tar
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# 日志文件
+*.log
+logs/
+*.log.*
+
+# 数据文件
+data/raw/*
+data/processed/*
+uploads/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# 模型文件
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+neo4j_data/
+mysql_data/
+
+# Docker 相关
+docker-data/
+docker-volumes/
+.docker/
+
+# 测试文件
+test-results/
+test-reports/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 文档（可选，如果不需要在容器中）
+*.md
+!README.md
+!docker/README.md
+!hadoop/README.md
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# 密钥文件
+*.pem
+*.key
+*.crt
+secrets/
+
+# 大文件（PDF、文档等）
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+
+# 备注文件
+TODO.md
+NOTES.md
+

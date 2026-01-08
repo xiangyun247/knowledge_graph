@@ -19,15 +19,17 @@ class MySQLClient:
         self.port = port or int(os.getenv("MYSQL_PORT", 3306))
         self.user = user or os.getenv("MYSQL_USER", "root")
         self.password = password or os.getenv("MYSQL_PASSWORD", "")
-        self.database = database or os.getenv("MYSQL_DATABASE", "knowledge_graph")
+        self.database = database or os.getenv("MYSQL_DATABASE", "knowledge_graph_system")
         self.engine = None
         
     def connect(self):
         """建立数据库连接"""
         try:
             # 使用pymysql创建SQLAlchemy引擎
+            # 增加echo=True参数，用于调试连接问题
             self.engine = create_engine(
-                f"mysql+pymysql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+                f"mysql+pymysql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}",
+                echo=False  # 生产环境设置为False
             )
             # 测试连接
             with self.engine.connect():
@@ -35,6 +37,9 @@ class MySQLClient:
             return True
         except Exception as e:
             logger.error(f"连接MySQL数据库失败: {e}")
+            # 打印详细的错误信息，包括堆栈跟踪
+            import traceback
+            traceback.print_exc()
             return False
     
     def disconnect(self):
@@ -47,7 +52,8 @@ class MySQLClient:
         """执行查询（SELECT）"""
         try:
             if not self.engine:
-                self.connect()
+                if not self.connect():
+                    raise ConnectionError("无法连接到MySQL数据库")
             
             with self.engine.connect() as conn:
                 result = conn.execute(text(query), params or {})
@@ -60,7 +66,8 @@ class MySQLClient:
         """执行更新（INSERT, UPDATE, DELETE）"""
         try:
             if not self.engine:
-                self.connect()
+                if not self.connect():
+                    raise ConnectionError("无法连接到MySQL数据库")
             
             with self.engine.begin() as conn:  # 自动管理事务
                 result = conn.execute(text(query), params or {})

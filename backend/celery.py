@@ -5,11 +5,7 @@ Celery 应用配置文件
 """
 
 import os
-# 确保导入系统的celery模块，而不是当前目录下的celery.py
-import sys
-from importlib import import_module
-# 使用import_module来导入系统celery模块
-Celery = import_module('celery').Celery
+from celery import Celery
 
 # 设置环境变量，确保Django或其他框架的设置能被正确加载
 # 这里我们使用简单的配置，不依赖Django

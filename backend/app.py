@@ -5,7 +5,12 @@
 """
 
 import os
+import sys
+# 将项目根目录添加到Python路径中
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 import uuid

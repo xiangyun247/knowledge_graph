@@ -40,7 +40,10 @@ except ImportError:
 
     from backend.celery_app import celery_app
 
-
+# 如果 celery_app 为 None，说明 Celery 初始化失败，任务装饰器将无法使用
+# 这种情况下，任务定义仍然可以存在，但不会被执行
+if celery_app is None:
+    logger.warning("Celery 应用未初始化，Celery 任务将不可用")
 
 # 配置日志
 

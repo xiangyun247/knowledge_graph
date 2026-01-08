@@ -21,7 +21,7 @@ class TextPreprocessor:
 
     def clean_text(self, text: str) -> str:
         """
-        清理文本
+        清理文本（支持中英文）
 
         Args:
             text: 原始文本
@@ -32,15 +32,16 @@ class TextPreprocessor:
         # 移除多余空白
         text = " ".join(text.split())
 
-        # 移除特殊字符（保留中文、英文、数字、常用标点）
+        # 移除特殊字符（保留中英文、数字、常用标点）
         import re
-        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、；：""''（）【】《》\-\s]', '', text)
+        # 同时支持中英文标点
+        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、；：""''（）【】《》\-\.\?!\s]', '', text)
 
         return text.strip()
 
     def split_sentences(self, text: str) -> List[str]:
         """
-        将文本分割为句子
+        将文本分割为句子（支持中英文）
 
         Args:
             text: 输入文本
@@ -49,8 +50,8 @@ class TextPreprocessor:
             句子列表
         """
         import re
-        # 按中文句号、问号、感叹号分割
-        sentences = re.split(r'[。！？\n]+', text)
+        # 同时支持中文和英文标点分割
+        sentences = re.split(r'[。！？\.\?!\n]+', text)
 
         # 过滤空句子
         sentences = [s.strip() for s in sentences if s.strip()]
@@ -117,50 +118,96 @@ class KnowledgeGraphBuilder:
             text: 输入文本
 
         Returns:
-            处理结果统计
+            处理结果，包含统计信息和实际的实体、关系数据
         """
         try:
             logger.info(f"开始处理文本 (长度: {len(text)})")
 
             # 1. 文本预处理
             cleaned_text = self.preprocessor.clean_text(text)
+            
+            # 2. 文本分段处理，每段大约1000个字符，提高处理效率
+            logger.info(f"原始文本长度: {len(cleaned_text)} 字符")
+            
+            # 先按句子分割，再合并成段落
             sentences = self.preprocessor.split_sentences(cleaned_text)
-
             logger.info(f"文本已分割为 {len(sentences)} 个句子")
+            
+            # 将句子合并为段落，每段大约1000个字符
+            paragraphs = []
+            current_paragraph = []
+            current_length = 0
+            
+            for sentence in sentences:
+                sentence_length = len(sentence)
+                if current_length + sentence_length < 1000:
+                    current_paragraph.append(sentence)
+                    current_length += sentence_length
+                else:
+                    if current_paragraph:
+                        paragraphs.append("。".join(current_paragraph) + "。")
+                    current_paragraph = [sentence]
+                    current_length = sentence_length
+            
+            # 添加最后一个段落
+            if current_paragraph:
+                paragraphs.append("。".join(current_paragraph) + "。")
+            
+            logger.info(f"文本已合并为 {len(paragraphs)} 个段落")
 
-            # 2. 提取实体和关系
+            # 3. 提取实体和关系
             entities_created = 0
             relations_created = 0
+            
+            # 存储所有提取的实体和关系
+            all_entities = []
+            all_relations = []
+            
+            # 用于去重的集合
+            seen_entities = set()
+            seen_relations = set()
 
-            for i, sentence in enumerate(sentences):
-                if not sentence:
+            # 处理每个段落
+            for i, paragraph in enumerate(paragraphs):
+                if not paragraph:
                     continue
 
-                logger.debug(f"处理句子 {i + 1}/{len(sentences)}: {sentence[:50]}...")
+                logger.info(f"处理段落 {i + 1}/{len(paragraphs)} (长度: {len(paragraph)} 字符)")
 
                 # 使用 LLM 提取实体和关系
-                extraction_result = self._extract_entities_and_relations(sentence)
+                extraction_result = self._extract_entities_and_relations(paragraph)
 
-                # 创建实体
+                # 处理实体
                 for entity in extraction_result.get("entities", []):
-                    try:
-                        self._create_entity(entity)
-                        entities_created += 1
-                    except Exception as e:
-                        logger.warning(f"创建实体失败: {entity} - {e}")
+                    entity_key = (entity.get("name"), entity.get("type"))
+                    if entity_key not in seen_entities:
+                        seen_entities.add(entity_key)
+                        all_entities.append(entity)
+                        try:
+                            self._create_entity(entity)
+                            entities_created += 1
+                        except Exception as e:
+                            logger.warning(f"创建实体失败: {entity} - {e}")
 
-                # 创建关系
+                # 处理关系
                 for relation in extraction_result.get("relations", []):
-                    try:
-                        self._create_relation(relation)
-                        relations_created += 1
-                    except Exception as e:
-                        logger.warning(f"创建关系失败: {relation} - {e}")
+                    relation_key = (relation.get("subject"), relation.get("predicate"), relation.get("object"))
+                    if relation_key not in seen_relations:
+                        seen_relations.add(relation_key)
+                        all_relations.append(relation)
+                        try:
+                            self._create_relation(relation)
+                            relations_created += 1
+                        except Exception as e:
+                            logger.warning(f"创建关系失败: {relation} - {e}")
 
             result = {
                 "sentences_processed": len(sentences),
+                "paragraphs_processed": len(paragraphs),
                 "entities_created": entities_created,
-                "relations_created": relations_created
+                "relations_created": relations_created,
+                "entities": all_entities,
+                "relations": all_relations
             }
 
             logger.info(f"文本处理完成: {result}")

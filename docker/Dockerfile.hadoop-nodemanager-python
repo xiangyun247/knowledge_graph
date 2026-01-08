@@ -8,14 +8,48 @@ RUN echo "deb http://archive.debian.org/debian stretch main" > /etc/apt/sources.
     echo "deb http://archive.debian.org/debian-security stretch/updates main" >> /etc/apt/sources.list && \
     echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99no-check-valid-until
 
-# 安装 Python 3、pip 和 ImageMagick（pdfplumber 需要）
+# 安装编译工具和依赖（用于编译 Python 3.9）
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip libmagickwand-dev && \
-    apt-get clean && \
+    apt-get install -y \
+        build-essential \
+        zlib1g-dev \
+        libncurses5-dev \
+        libgdbm-dev \
+        libnss3-dev \
+        libssl-dev \
+        libreadline-dev \
+        libffi-dev \
+        libsqlite3-dev \
+        wget \
+        libmagickwand-dev \
+        xz-utils \
+        && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装 Python 依赖（使用清华镜像 + 超时）
-RUN pip3 install --no-cache-dir --default-timeout=120 -i https://pypi.tuna.tsinghua.edu.cn/simple pdfplumber==0.5.0
+# 下载并编译安装 Python 3.9.18（兼容性好，支持 pdfplumber）
+# 使用 --enable-optimizations 会大大增加编译时间，这里先不使用
+RUN cd /tmp && \
+    wget -q https://www.python.org/ftp/python/3.9.18/Python-3.9.18.tgz && \
+    tar -xzf Python-3.9.18.tgz && \
+    cd Python-3.9.18 && \
+    ./configure --prefix=/usr/local --enable-shared && \
+    make -j4 && \
+    make altinstall && \
+    ldconfig && \
+    cd / && \
+    rm -rf /tmp/Python-3.9.18* && \
+    ln -sf /usr/local/bin/python3.9 /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3.9 /usr/local/bin/python
 
-# 创建 python 软链接（可选）
-RUN ln -sf /usr/bin/python3 /usr/bin/python || true
+# 安装 pip
+RUN /usr/local/bin/python3.9 -m ensurepip --upgrade && \
+    /usr/local/bin/python3.9 -m pip install --upgrade pip setuptools wheel
+
+# 安装 Python 依赖（使用清华镜像 + 超时）
+# pdfplumber 0.5.0 需要 six 等依赖，需要先安装依赖
+RUN /usr/local/bin/python3.9 -m pip install --no-cache-dir --default-timeout=120 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    six pdfplumber>=0.11.0
+
+# 确保 python3 命令指向新版本
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.9 1 || true

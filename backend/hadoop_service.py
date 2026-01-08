@@ -353,7 +353,8 @@ class HadoopService:
             
             output_path = f"{self.hdfs_root}/processed/pdf_extract"
             
-            mapper = "hadoop/mapreduce/pdf_extract/mapper.py"
+            # 使用Shell脚本作为Mapper，避免Python依赖问题
+            mapper = "hadoop/mapreduce/pdf_extract/mapper_shell.sh"
             reducer = "hadoop/mapreduce/pdf_extract/reducer.py"
             
             return self._submit_streaming_job(
@@ -450,34 +451,52 @@ class HadoopService:
             if download_result.returncode != 0:
                 raise Exception(f"从 HDFS 下载 mapper 脚本失败: {download_result.stderr}")
             
+            # 确保脚本有执行权限
+            chmod_cmd = ["docker", "exec", "hadoop-namenode", "chmod", "+x", mapper_local]
+            subprocess.run(chmod_cmd, capture_output=True, timeout=10)
+            
             if reducer_local:
                 download_cmd = ["docker", "exec", "hadoop-namenode", "hadoop", "fs", "-get", reducer_hdfs, reducer_local]
                 download_result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=30)
                 if download_result.returncode != 0:
                     raise Exception(f"从 HDFS 下载 reducer 脚本失败: {download_result.stderr}")
+                
+                # 确保脚本有执行权限
+                chmod_cmd = ["docker", "exec", "hadoop-namenode", "chmod", "+x", reducer_local]
+                subprocess.run(chmod_cmd, capture_output=True, timeout=10)
             
             # 构建命令
             # Hadoop Streaming 会将 -file 指定的文件分发到任务工作目录
             # 因此 mapper/reducer 命令中应使用文件名（不带路径）
+            # 注意：NodeManager 使用 Python 3.9，路径为 /usr/local/bin/python3
+            # 使用绝对路径确保能找到正确的 Python
             mapper_file = mapper_name
             reducer_file = reducer_name if reducer_name else None
+            
+            # 使用绝对路径的 Python 命令（NodeManager 容器中的 Python 3.9）
+            # 这样可以确保即使 PATH 环境变量不正确也能找到 Python
+            python_cmd = "/usr/local/bin/python3"
             
             cmd = [ "docker", "exec", "hadoop-namenode",
                 "hadoop", "jar",
                 self.streaming_jar,
                 "-input", input_path,
                 "-output", output_path,
-                "-mapper", f"python3 {mapper_file}",
+                "-mapper", f"{python_cmd} {mapper_file}",
                 "-file", mapper_local,
             ]
             
             if reducer_local and reducer_file:
-                cmd.extend(["-reducer", f"python3 {reducer_file}", "-file", reducer_local])
+                cmd.extend(["-reducer", f"{python_cmd} {reducer_file}", "-file", reducer_local])
             
             # 设置 Python 环境
+            # 确保 PYTHONPATH 包含必要的路径
+            # NodeManager 的 Python 3.9 安装在 /usr/local/lib/python3.9/site-packages
+            # 设置 PATH 确保能找到 Python 和其他工具
             cmd.extend([
-                "-cmdenv", f"PYTHONPATH={self.hadoop_home}",
+                "-cmdenv", f"PYTHONPATH={self.hadoop_home}:/usr/local/lib/python3.9/site-packages",
                 "-cmdenv", "HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1",
+                "-cmdenv", "PATH=/usr/local/bin:/usr/bin:/bin",
             ])
             
             logger.info(f"执行命令: {' '.join(cmd)}")
