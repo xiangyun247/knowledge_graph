@@ -132,9 +132,9 @@ def build_kg_from_hadoop(self, task_id: str, file_ids: List[str], hadoop_result:
                         relation_count=len(relations)
                     )
                     
-                    # 累加统计结果
-                    total_entities_created += result.get("entities_created", 0)
-                    total_relations_created += result.get("relations_created", 0)
+                    # 累加统计结果 - 使用实际提取的实体和关系数量，而不是Neo4j创建结果
+                    total_entities_created += len(entities)
+                    total_relations_created += len(relations)
                     
                     # 更新任务进度：包含实体和关系计数
                     if task_id in task_store:

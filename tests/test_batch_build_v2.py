@@ -19,7 +19,8 @@ import requests
 import uuid
 
 # ==== 配置 ====
-BASE_URL = "http://127.0.0.1:5001"  # 当前应用程序运行的端口
+# 容器内使用服务名称访问后端服务
+BASE_URL = "http://backend:5001"  # 当前应用程序运行的端口
 TEST_FILES_DIR = "./test_files"  # 测试文件存储目录
 NUM_TEST_FILES = 2  # 每个类型的测试文件数量
 # ==============
@@ -27,7 +28,7 @@ NUM_TEST_FILES = 2  # 每个类型的测试文件数量
 
 def get_real_pdf_files():
     """
-    获取用户提供的真实PDF文件路径
+    获取用户提供的真实PDF文件路径，支持在Docker容器内运行
     
     Returns:
         list: 真实PDF文件路径列表
@@ -36,25 +37,45 @@ def get_real_pdf_files():
     print("步骤 1: 获取真实PDF文件")
     print("=" * 60)
     
-    # 用户提供的真实PDF文件路径
-    pdf_files = [
-        r"C:\Users\23035\Desktop\pdf_test1.pdf",
-        r"C:\Users\23035\Desktop\AP.pdf"
-    ]
+    # 首先检查容器内是否有测试文件目录
+    container_test_dir = "/app/test_files"
+    test_files = []
     
-    # 检查文件是否存在
-    existing_files = []
-    for file_path in pdf_files:
-        if os.path.exists(file_path):
-            existing_files.append(file_path)
-            print(f"[INFO] 找到PDF文件: {file_path}")
-        else:
-            print(f"[WARN] PDF文件不存在: {file_path}")
+    # 检查容器内的测试文件目录
+    if os.path.exists(container_test_dir):
+        print(f"[INFO] 发现容器内测试目录: {container_test_dir}")
+        # 获取目录中的所有PDF文件
+        for file in os.listdir(container_test_dir):
+            if file.lower().endswith('.pdf'):
+                file_path = os.path.join(container_test_dir, file)
+                test_files.append(file_path)
+                print(f"[INFO] 找到容器内PDF文件: {file_path}")
     
-    if not existing_files:
-        raise RuntimeError("没有找到可用的PDF文件")
+    # 如果没有找到PDF文件，生成一些简单的测试文本文件
+    if not test_files:
+        print("[INFO] 没有找到PDF文件，生成简单测试文本文件")
+        
+        # 创建测试文件目录
+        os.makedirs(TEST_FILES_DIR, exist_ok=True)
+        
+        # 生成2个简单的测试文本文件
+        for i in range(NUM_TEST_FILES):
+            test_content = f"这是测试文本文件 {i+1}\n\n"
+            test_content += "急性胰腺炎（AP）是一种常见的急腹症，其发病率逐年升高。\n"
+            test_content += "AP的主要症状包括腹痛、恶心、呕吐和发热。\n"
+            test_content += "诊断AP通常需要结合临床表现、血清淀粉酶和脂肪酶水平升高以及影像学检查结果。\n"
+            
+            file_path = os.path.join(TEST_FILES_DIR, f"test_{i+1}.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(test_content)
+            
+            test_files.append(file_path)
+            print(f"[INFO] 生成测试文件: {file_path}")
     
-    return existing_files
+    if not test_files:
+        raise RuntimeError("没有找到可用的测试文件")
+    
+    return test_files
 
 
 def upload_batch_files(file_paths):

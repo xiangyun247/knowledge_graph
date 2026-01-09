@@ -201,6 +201,7 @@ class KnowledgeGraphBuilder:
                         except Exception as e:
                             logger.warning(f"创建关系失败: {relation} - {e}")
 
+            # 确保返回完整的实体和关系数据
             result = {
                 "sentences_processed": len(sentences),
                 "paragraphs_processed": len(paragraphs),
@@ -210,6 +211,9 @@ class KnowledgeGraphBuilder:
                 "relations": all_relations
             }
 
+            # 添加调试日志，查看all_entities和all_relations的实际内容
+            logger.debug(f"all_entities 内容: {all_entities}")
+            logger.debug(f"all_relations 内容: {all_relations}")
             logger.info(f"文本处理完成: {result}")
             return result
 
@@ -251,7 +255,7 @@ class KnowledgeGraphBuilder:
 }}
 
 注意：
-1. 只提取与胰腺炎相关的医学实体
+1. 提取所有相关的医学实体
 2. 确保关系的主体和客体都在实体列表中
 3. 如果文本中没有明确的实体或关系，返回空列表
 """
@@ -264,18 +268,38 @@ class KnowledgeGraphBuilder:
             ]
 
             response = self.llm.chat(messages, temperature=0.3)
+            logger.debug(f"LLM原始响应: {response}")
 
-            # 解析 JSON 响应
+            # 确保导入json和re模块
             import json
             import re
 
-            # 尝试提取 JSON（LLM 可能会在 JSON 前后添加文字）
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                logger.warning(f"LLM 响应无法解析为 JSON: {response[:100]}")
-                result = {"entities": [], "relations": []}
+            # 改进的JSON提取逻辑
+            try:
+                # 尝试直接解析整个响应
+                result = json.loads(response)
+            except json.JSONDecodeError:
+                # 如果失败，尝试提取JSON部分
+                # 使用更严格的正则表达式，只匹配最外层的JSON对象
+                json_pattern = r'\{[\s\S]*?\}'
+                matches = re.findall(json_pattern, response)
+                
+                if matches:
+                    # 尝试解析每个匹配项，直到找到有效的JSON
+                    for match in matches:
+                        try:
+                            result = json.loads(match)
+                            logger.debug(f"成功解析JSON: {match[:100]}...")
+                            break
+                        except json.JSONDecodeError:
+                            continue
+                    else:
+                        # 所有匹配项都无法解析
+                        logger.warning(f"LLM响应无法解析为JSON: {response[:150]}...")
+                        result = {"entities": [], "relations": []}
+                else:
+                    logger.warning(f"LLM响应中没有找到JSON: {response[:150]}...")
+                    result = {"entities": [], "relations": []}
 
             return result
 

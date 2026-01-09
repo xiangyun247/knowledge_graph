@@ -138,7 +138,7 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # 服务器配置
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "5001"))
 
 # 提供给测试脚本使用的后端地址
 BACKEND_HOST = os.getenv("BACKEND_HOST", "localhost")

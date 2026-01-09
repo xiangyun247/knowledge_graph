@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS knowledge_graphs (
     description TEXT COMMENT '图谱描述',
     data_source VARCHAR(255) COMMENT '数据来源',
     file_path VARCHAR(255) COMMENT '原始文件路径',
+    graph_data JSON COMMENT '图谱数据（JSON格式，包含节点和关系）',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending' COMMENT '图谱状态',

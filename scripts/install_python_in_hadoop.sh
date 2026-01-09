@@ -24,3 +24,5 @@ echo "Python 安装完成！"
 docker exec hadoop-namenode python3 --version
 docker exec hadoop-namenode pip3 list | grep pdfplumber
 
+
+

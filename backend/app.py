@@ -1149,6 +1149,35 @@ async def expand_entity(entity_id: str, params: Optional[Dict[str, Any]] = None)
         logger.error(f"扩展实体失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"扩展实体失败: {str(e)}")
 
+# 获取单个文件构建任务进度API
+@app.get("/api/kg/build/progress/{task_id}", tags=["知识图谱构建"])
+async def get_kg_build_progress(task_id: str):
+    """
+    获取单个文件知识图谱构建任务进度
+    """
+    try:
+        if task_id not in tasks:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        task = tasks[task_id]
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "progress": task.get("progress", 0),
+            "status": task.get("status", "unknown"),
+            "current_chunk": task.get("current_chunk", 0),
+            "total_chunks": task.get("total_chunks", 0),
+            "entities_created": task.get("entities_created", 0),
+            "relations_created": task.get("relations_created", 0),
+            "message": task.get("message", ""),
+            "current_processing": task.get("current_processing", "")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取任务进度失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取任务进度失败: {str(e)}")
+
 # 搜索历史记录API
 @app.get("/api/history/search", tags=["历史记录"])
 async def search_history(keyword: Optional[str] = None, type: Optional[str] = None, status: Optional[str] = None):

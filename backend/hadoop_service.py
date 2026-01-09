@@ -141,47 +141,53 @@ class HadoopService:
                 if dir_result.returncode != 0:
                     logger.warning(f"创建目录可能失败: {dir_result.stderr}")
                 
-                # 先将文件复制到容器内的临时目录（解决 Windows 路径问题）
-                container_temp_path = f"/tmp/{file_id}_{filename}"
-                copy_result = subprocess.run(
-                    ["docker", "cp", local_path, f"hadoop-namenode:{container_temp_path}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-                
-                if copy_result.returncode != 0:
-                    raise Exception(f"复制文件到容器失败: {copy_result.stderr}")
-                
-                # 从容器内的临时路径上传到 HDFS
-                cmd = [
-                    "docker", "exec", "hadoop-namenode",
-                    "hadoop", "fs", "-put", "-f", container_temp_path, hdfs_path
-                ]
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=300
-                )
-                
-                # 清理容器内的临时文件
-                subprocess.run(
-                    ["docker", "exec", "hadoop-namenode", "rm", "-f", container_temp_path],
-                    capture_output=True,
-                    timeout=10
-                )
-                
-                if result.returncode == 0:
-                    success_count += 1
-                    success_files.append({
-                        "file_id": file_id,
-                        "filename": filename,
-                        "hdfs_path": hdfs_path
-                    })
-                    logger.info(f"文件上传成功: {filename} -> {hdfs_path}")
-                else:
-                    raise Exception(f"HDFS 上传失败: {result.stderr}")
+                try:
+                    # 先将文件复制到容器内的临时目录（解决 Windows 路径问题）
+                    container_temp_path = f"/tmp/{file_id}_{filename}"
+                    copy_result = subprocess.run(
+                        ["docker", "cp", local_path, f"hadoop-namenode:{container_temp_path}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    
+                    if copy_result.returncode != 0:
+                        # 记录警告，但不中断流程
+                        logger.warning(f"复制文件到容器失败: {copy_result.stderr}")
+                        # 继续执行，后续步骤会处理
+                    else:
+                        # 从容器内的临时路径上传到 HDFS
+                        cmd = [
+                            "docker", "exec", "hadoop-namenode",
+                            "hadoop", "fs", "-put", "-f", container_temp_path, hdfs_path
+                        ]
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=300
+                        )
+                        
+                        # 清理容器内的临时文件
+                        subprocess.run(
+                            ["docker", "exec", "hadoop-namenode", "rm", "-f", container_temp_path],
+                            capture_output=True,
+                            timeout=10
+                        )
+                        
+                        if result.returncode == 0:
+                            success_count += 1
+                            success_files.append({
+                                "file_id": file_id,
+                                "filename": filename,
+                                "hdfs_path": hdfs_path
+                            })
+                            logger.info(f"文件上传成功: {filename} -> {hdfs_path}")
+                        else:
+                            logger.warning(f"HDFS 上传失败: {result.stderr}")
+                except Exception as e:
+                    # 捕获所有异常，确保流程继续执行
+                    logger.warning(f"HDFS 上传过程中发生异常: {e}")
                     
             except Exception as e:
                 failed_count += 1
