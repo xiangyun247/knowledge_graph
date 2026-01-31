@@ -19,10 +19,11 @@ import logging
 import threading
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -123,10 +124,11 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
                     size += len(chunk)
                     f.write(chunk)
             
-            # PDF提取：在上传阶段完成PDF文本提取
+            # 文本提取：PDF 用 pdfplumber，.txt 直接读入，供批量构建使用
             pdf_text = ""
             is_pdf = file_ext.lower() == ".pdf"
-            
+            is_txt = file_ext.lower() == ".txt"
+
             if is_pdf:
                 try:
                     import pdfplumber
@@ -136,14 +138,22 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
                 except Exception as e:
                     logger.error(f"PDF提取失败，文件ID: {file_id}, 错误: {e}")
                     pdf_text = f"ERROR: 提取失败: {e}"
+            elif is_txt:
+                try:
+                    with open(local_path, "r", encoding="utf-8") as f:
+                        pdf_text = f.read()
+                    logger.info(f"成功读取TXT文本，文件ID: {file_id}, 文本长度: {len(pdf_text)}")
+                except Exception as e:
+                    logger.error(f"TXT读取失败，文件ID: {file_id}, 错误: {e}")
+                    pdf_text = f"ERROR: 读取失败: {e}"
 
-            # 记录到内存
+            # 记录到内存（pdf_text 统一存“可构建正文”，PDF 与 TXT 均可用）
             uploaded_files[file_id] = {
                 "filename": file.filename,
                 "path": local_path,
                 "size": size,
                 "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "pdf_text": pdf_text,  # 保存提取的文本
+                "pdf_text": pdf_text,
                 "is_pdf": is_pdf,
             }
 
@@ -198,17 +208,17 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=500, detail=f"批量上传失败: {e}")
 
 
-def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_hadoop: bool) -> None:
+def _run_hadoop_and_celery_in_background(
+        task_id: str, file_ids: List[str], use_hadoop: bool, user_id: str = "system"
+) -> None:
         """
-        在后台线程中执行 Hadoop 处理，并提交 Celery 任务构建知识图谱
+        在后台线程中执行：收集已提取的 PDF 文本，使用线程池并行构建知识图谱（每文件一线程）。
         """
-        # 延迟导入 globals，避免在导入时触发异常
         tasks = None
         TaskStatus = None
         hadoop_result = None
-        
+
         try:
-            # 先获取任务字典，但不立即导入所有模块
             try:
                 globals_ = _get_app_globals()
                 tasks = globals_["tasks"]
@@ -216,67 +226,112 @@ def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_
                 uploaded_files = globals_["uploaded_files"]
             except Exception as import_err:
                 logger.error(f"获取应用全局变量失败: {import_err}", exc_info=True)
-                # 如果导入失败，尝试直接导入
                 import backend.app as app_module
                 tasks = app_module.tasks
                 TaskStatus = app_module.TaskStatus
                 uploaded_files = app_module.uploaded_files
-            
+
             if task_id not in tasks:
                 logger.warning("任务不存在: %s", task_id)
                 return
 
-            # 使用已提取的PDF文本，跳过Hadoop处理
-            tasks[task_id]["message"] = "使用已提取的PDF文本，跳过Hadoop处理，直接构建知识图谱"
+            tasks[task_id]["message"] = "使用已提取的PDF文本，并行构建知识图谱"
             tasks[task_id]["progress"] = 50
-            tasks[task_id]["current_processing"] = "准备构建知识图谱"
+            tasks[task_id]["current_processing"] = "准备并行构建"
 
-            # 收集已提取的文本
             extracted_texts = {}
             for file_id in file_ids:
                 file_info = uploaded_files.get(file_id, {})
-                if file_info.get("is_pdf"):
-                    extracted_texts[file_id] = file_info.get("pdf_text", "")
-            
-            # 模拟Hadoop处理结果，包含实际提取的文本
+                text = (file_info.get("pdf_text") or "").strip()
+                if text:
+                    extracted_texts[file_id] = text
+
             hadoop_result = {
                 "success": True,
                 "final_output": "/knowledge_graph/processed/text_chunk",
                 "stages": {
                     "pdf_extract": {"success": True, "output_path": "/knowledge_graph/processed/pdf_extract"},
                     "text_clean": {"success": True, "output_path": "/knowledge_graph/processed/text_clean"},
-                    "text_chunk": {"success": True, "output_path": "/knowledge_graph/processed/text_chunk"}
+                    "text_chunk": {"success": True, "output_path": "/knowledge_graph/processed/text_chunk"},
                 },
-                "extracted_texts": extracted_texts  # 添加实际提取的文本
+                "extracted_texts": extracted_texts,
             }
-            
-            # 立即保存 Hadoop 结果
             tasks[task_id]["hadoop_result"] = hadoop_result
 
-            try:
-                # 直接使用本地构建，避免依赖 Celery
-                logger.info(f"任务 {task_id} 跳过 Celery，直接在本地构建知识图谱")
-                # 直接调用任务函数，在本地构建知识图谱
-                from backend.tasks import build_kg_from_hadoop
-                result = build_kg_from_hadoop(task_id, file_ids, hadoop_result)
-                logger.info(f"本地构建知识图谱完成，结果: {result}")
-                # 更新任务状态为完成
-                tasks[task_id]["status"] = TaskStatus.COMPLETED
-                tasks[task_id]["message"] = "知识图谱构建完成（本地构建）"
+            if not extracted_texts:
+                tasks[task_id]["status"] = TaskStatus.FAILED
+                tasks[task_id]["message"] = "没有可用的已提取文本"
                 tasks[task_id]["progress"] = 100
-                tasks[task_id]["entities_created"] = result.get("entities_created", 0)
-                tasks[task_id]["relations_created"] = result.get("relations_created", 0)
+                return
+
+            try:
+                from backend.tasks import build_single_file_kg
+
+                task_store_lock = threading.Lock()
+                total_files = len(extracted_texts)
+                _max = int(os.getenv("BATCH_BUILD_MAX_WORKERS", "4"))
+                max_workers = max(1, min(_max, total_files))
+                logger.info("批量构建并行度: max_workers=%s (BATCH_BUILD_MAX_WORKERS=%s)", max_workers, os.getenv("BATCH_BUILD_MAX_WORKERS"))
+                total_entities = 0
+                total_relations = 0
+                file_results = []
+                failed_any = False
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {}
+                    for file_idx, (fid, text) in enumerate(extracted_texts.items()):
+                        filename = (uploaded_files.get(fid) or {}).get("filename", "") or ""
+                        fut = executor.submit(
+                            build_single_file_kg,
+                            task_id,
+                            fid,
+                            text or "",
+                            user_id,
+                            tasks,
+                            task_store_lock,
+                            file_idx,
+                            total_files,
+                            filename,
+                        )
+                        futures[fut] = fid
+
+                    for fut in as_completed(futures):
+                        file_id = futures[fut]
+                        try:
+                            res = fut.result()
+                            if res.get("success"):
+                                total_entities += res.get("entities_created", 0)
+                                total_relations += res.get("relations_created", 0)
+                                file_results.append(res)
+                            else:
+                                failed_any = True
+                                logger.warning("文件 %s 构建失败: %s", file_id, res.get("error"))
+                        except Exception as e:
+                            failed_any = True
+                            logger.exception("文件 %s 构建异常: %s", file_id, e)
+
+                with task_store_lock:
+                    tasks[task_id]["entities_created"] = total_entities
+                    tasks[task_id]["relations_created"] = total_relations
+                    tasks[task_id]["status"] = (
+                        TaskStatus.FAILED if failed_any and not file_results else TaskStatus.COMPLETED
+                    )
+                    tasks[task_id]["message"] = (
+                        "知识图谱批量构建完成（并行）"
+                        if not failed_any
+                        else f"批量构建完成，部分文件失败（成功 {len(file_results)}/{total_files}）"
+                    )
+                    tasks[task_id]["progress"] = 100
+                    tasks[task_id]["file_results"] = file_results
+                logger.info("任务 %s 并行构建完成: entities=%s, relations=%s", task_id, total_entities, total_relations)
             except Exception as e:
-                # 捕获所有异常，设置任务失败
-                logger.error(f"本地构建知识图谱失败: {e}", exc_info=True)
+                logger.error(f"并行构建知识图谱失败: {e}", exc_info=True)
                 tasks[task_id]["status"] = TaskStatus.FAILED
                 tasks[task_id]["message"] = f"知识图谱构建失败: {e}"
                 tasks[task_id]["progress"] = 100
-                # 设置调试信息
                 tasks[task_id]["error_type"] = type(e).__name__
                 tasks[task_id]["error_message"] = str(e)
                 tasks[task_id]["traceback"] = traceback.format_exc()
-                
             return
 
         except Exception as e:
@@ -338,15 +393,13 @@ def _run_hadoop_and_celery_in_background(task_id: str, file_ids: List[str], use_
 
 
 @router.post("/build/batch")
-async def batch_build_kg(request: BatchBuildRequest):
+async def batch_build_kg(req: Request, request: BatchBuildRequest):
     """
-    批量触发 Hadoop + Celery 构建知识图谱 (异步任务)
+    批量触发并行构建知识图谱 (异步任务)。
 
     步骤:
     1. 创建任务ID, 在内存中初始化任务状态
-    2. 启动后台线程:
-       - 使用 Hadoop 进行 PDF 提取 / 文本清洗 / 文本分块
-       - 使用 Celery 从 HDFS 下载文本块并构建知识图谱
+    2. 启动后台线程: 使用线程池并行为每个文件构建知识图谱（每文件一线程）
     3. 立即返回 task_id, 前端通过 /status 接口轮询任务状态
     """
     globals_ = _get_app_globals()
@@ -358,7 +411,6 @@ async def batch_build_kg(request: BatchBuildRequest):
     if not file_ids:
         raise HTTPException(status_code=400, detail="文件ID列表不能为空")
 
-    # 校验文件是否存在
     missing = [fid for fid in file_ids if fid not in uploaded_files]
     if missing:
         raise HTTPException(
@@ -366,10 +418,13 @@ async def batch_build_kg(request: BatchBuildRequest):
             detail=f"以下文件ID不存在或尚未上传: {', '.join(missing)}",
         )
 
-    # 生成任务 ID
-    task_id = str(uuid.uuid4())
+    try:
+        from backend.auth import get_current_user_id
+        current_user_id = get_current_user_id(req)
+    except Exception:
+        current_user_id = "system"
 
-    # 初始化任务信息
+    task_id = str(uuid.uuid4())
     tasks[task_id] = {
         "status": TaskStatus.PROCESSING,
         "progress": 5,
@@ -385,10 +440,9 @@ async def batch_build_kg(request: BatchBuildRequest):
         "celery_task_id": None,
     }
 
-    # 启动后台线程执行实际任务
     thread = threading.Thread(
         target=_run_hadoop_and_celery_in_background,
-        args=(task_id, file_ids, request.use_hadoop),
+        args=(task_id, file_ids, request.use_hadoop, current_user_id),
         daemon=True,
     )
     thread.start()

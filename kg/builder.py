@@ -6,6 +6,7 @@
 import config  # ✅ 修改这里
 from typing import List, Dict, Any, Optional
 import logging
+import re
 from db.neo4j_client import Neo4jClient
 from llm.client import LLMClient
 
@@ -267,40 +268,95 @@ class KnowledgeGraphBuilder:
                 {"role": "user", "content": prompt}
             ]
 
-            response = self.llm.chat(messages, temperature=0.3)
+            response = self.llm.chat(messages, temperature=0.3, max_tokens=4096)
             logger.debug(f"LLM原始响应: {response}")
 
-            # 确保导入json和re模块
             import json
             import re
 
-            # 改进的JSON提取逻辑
-            try:
-                # 尝试直接解析整个响应
-                result = json.loads(response)
-            except json.JSONDecodeError:
-                # 如果失败，尝试提取JSON部分
-                # 使用更严格的正则表达式，只匹配最外层的JSON对象
-                json_pattern = r'\{[\s\S]*?\}'
-                matches = re.findall(json_pattern, response)
-                
-                if matches:
-                    # 尝试解析每个匹配项，直到找到有效的JSON
-                    for match in matches:
-                        try:
-                            result = json.loads(match)
-                            logger.debug(f"成功解析JSON: {match[:100]}...")
-                            break
-                        except json.JSONDecodeError:
-                            continue
-                    else:
-                        # 所有匹配项都无法解析
-                        logger.warning(f"LLM响应无法解析为JSON: {response[:150]}...")
-                        result = {"entities": [], "relations": []}
-                else:
-                    logger.warning(f"LLM响应中没有找到JSON: {response[:150]}...")
-                    result = {"entities": [], "relations": []}
+            def extract_json(text: str) -> dict:
+                """从 LLM 响应中提取最外层 JSON，支持 ```json 代码块、截断 JSON、字符串内换行。"""
+                text = (text or "").strip()
+                # 1. 去掉 markdown 代码块（无闭合 ``` 时用整段剩余内容）
+                if "```json" in text:
+                    start = text.find("```json") + 7
+                    end = text.find("```", start)
+                    text = text[start:end].strip() if end != -1 else text[start:].strip()
+                elif "```" in text:
+                    start = text.find("```") + 3
+                    end = text.find("```", start)
+                    text = text[start:end].strip() if end != -1 else text[start:].strip()
+                # 2. 直接解析
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    pass
+                # 3. 括号匹配找最外层 {...}，并支持截断修复
+                start_idx = text.find("{")
+                if start_idx == -1:
+                    return {"entities": [], "relations": []}
+                depth = 0
+                in_string = False
+                escape = False
+                quote_char = None
+                open_bracket = 0  # 未闭合的 [
+                n = len(text)
+                for i in range(start_idx, n):
+                    c = text[i]
+                    if escape:
+                        escape = False
+                        continue
+                    if c == "\\" and in_string:
+                        escape = True
+                        continue
+                    if not in_string:
+                        if c == "{":
+                            depth += 1
+                        elif c == "}":
+                            depth -= 1
+                            if depth == 0:
+                                try:
+                                    return json.loads(text[start_idx : i + 1])
+                                except json.JSONDecodeError:
+                                    pass
+                        elif c == "[":
+                            open_bracket += 1
+                        elif c == "]":
+                            open_bracket = max(0, open_bracket - 1)
+                        elif c in ('"', "'"):
+                            in_string = True
+                            quote_char = c
+                    elif c == quote_char:
+                        in_string = False
+                    # 字符串内出现未转义换行（非法 JSON），视为截断或 LLM 换行，退出字符串以便继续匹配
+                    elif c == "\n" and in_string:
+                        in_string = False
+                # 4. 未在循环内返回：可能被截断，尝试补全后解析
+                raw = text[start_idx:]
+                suffix = (quote_char if in_string else "") + "]" * open_bracket + "}" * depth
+                try:
+                    return json.loads(raw + suffix)
+                except json.JSONDecodeError:
+                    pass
+                # 5. 再试：只补 } 闭合对象（常见截断在 description 末尾）
+                try:
+                    return json.loads(raw + (quote_char if in_string else "") + "}" * depth)
+                except json.JSONDecodeError:
+                    pass
+                return {"entities": [], "relations": []}
 
+            result = extract_json(response)
+            # 确保返回结构包含 entities 和 relations
+            if not isinstance(result, dict):
+                result = {"entities": [], "relations": []}
+            result.setdefault("entities", [])
+            result.setdefault("relations", [])
+            if not isinstance(result["entities"], list):
+                result["entities"] = []
+            if not isinstance(result["relations"], list):
+                result["relations"] = []
+            if not result["entities"] and not result["relations"] and response.strip():
+                logger.warning("LLM 返回解析后实体与关系均为空，原始响应前 500 字符: %s", response[:500])
             return result
 
         except Exception as e:
@@ -329,7 +385,6 @@ class KnowledgeGraphBuilder:
         # 创建或更新节点
         # 确保 entity_type 是有效的标签（Neo4j 标签不能包含特殊字符）
         # 清理 entity_type，只保留字母和数字
-        import re
         clean_entity_type = re.sub(r'[^a-zA-Z0-9_]', '', entity_type)
         if not clean_entity_type:
             clean_entity_type = "Entity"  # 如果清理后为空，使用默认标签
@@ -367,11 +422,16 @@ class KnowledgeGraphBuilder:
             logger.warning(f"未知的关系类型: {predicate}")
             predicate = "ASSOCIATED_WITH"  # 默认关系
 
-        # 创建关系
+        # 关系类型仅允许字母数字下划线（Neo4j 标签/类型规范）
+        clean_predicate = re.sub(r'[^a-zA-Z0-9_]', '_', predicate) or "ASSOCIATED_WITH"
+
+        # 避免 MATCH (a),(b) 笛卡尔积：先匹配 a，再匹配 b
         query = f"""
-        MATCH (a), (b)
-        WHERE a.name = $subject AND b.name = $object
-        MERGE (a)-[r:{predicate}]->(b)
+        MATCH (a {{name: $subject}})
+        WITH a
+        MATCH (b {{name: $object}})
+        WHERE a <> b
+        MERGE (a)-[r:{clean_predicate}]->(b)
         ON CREATE SET r.created_at = datetime()
         RETURN r
         """

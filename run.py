@@ -57,6 +57,29 @@ def start_server():
         sys.exit(1)
 
     logger.info("\n✓ 依赖检查通过")
+
+    # Agent（Chat）可用性：失败仅告警，不阻塞启动
+    try:
+        from backend.agent import run_agent
+        logger.info("✓ Agent 模块加载成功（Chat 可用）")
+    except Exception as e:
+        logger.warning("⚠ Agent 模块加载失败，/api/agent/query 与 /api/agent/query/stream 将返回 503: %s", e)
+        logger.warning("  请检查: pip install langgraph langchain-openai langchain-core；.env 中 DEEPSEEK_API_KEY")
+
+    # Chroma（文档知识库）可用性：失败仅告警，不阻塞启动
+    try:
+        from backend.chroma_store import ChromaStore
+        _s = ChromaStore()
+        _ = _s._collection.count()
+        logger.info("✓ Chroma 模块加载成功（文档知识库可用）")
+    except Exception as e:
+        err = str(e)
+        logger.warning("⚠ Chroma 模块加载失败，/api/kb/documents/* 将返回 500: %s", e)
+        if "np.float_" in err or "NumPy 2.0" in err:
+            logger.warning("  请执行: pip install 'numpy<2'   # Chroma 0.4.x 与 NumPy 2 不兼容")
+        else:
+            logger.warning("  请检查: pip install chromadb 'numpy<2'；若为 Embedding 失败可再检查 sentence-transformers")
+
     logger.info(f"\n🚀 正在启动服务器...")
     logger.info(f"   地址: http://{config.HOST}:{config.PORT}")
     logger.info(f"   环境: {config.ENVIRONMENT}")

@@ -147,6 +147,15 @@ class MySQLClient:
         params = {"graph_id": graph_id}
         result = self.execute_query(query, params)
         return result[0] if result else None
+
+    def get_graph_by_data_source(self, data_source):
+        """根据 data_source（如 file_id）获取知识图谱，用于 /graph/:file_id 直链"""
+        if not data_source:
+            return None
+        query = "SELECT * FROM knowledge_graphs WHERE data_source = :data_source"
+        params = {"data_source": data_source}
+        result = self.execute_query(query, params)
+        return result[0] if result else None
     
     def update_graph_status(self, graph_id, status, entity_count=None, relation_count=None):
         """更新知识图谱状态"""
@@ -192,9 +201,14 @@ class MySQLClient:
                     return str(obj)
                 raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
             
-            # 确保数据格式统一（使用 edges 而不是 relations）
-            if "relations" in graph_data and "edges" not in graph_data:
-                graph_data["edges"] = graph_data.pop("relations")
+            # 不修改入参，显式构建 payload，确保库中始终存 nodes + edges 两键
+            edges = graph_data.get("edges")
+            if edges is None:
+                edges = graph_data.get("relations", [])
+            payload = {
+                "nodes": list(graph_data.get("nodes", [])),
+                "edges": list(edges) if edges else []
+            }
             
             # 清理数据中的 DateTime 对象
             def clean_data(data):
@@ -215,7 +229,7 @@ class MySQLClient:
                     return data
             
             # 清理数据
-            cleaned_graph_data = clean_data(graph_data)
+            cleaned_graph_data = clean_data(payload)
             
             # 将数据转换为 JSON 字符串
             graph_data_json = json.dumps(cleaned_graph_data, ensure_ascii=False, default=serialize_datetime)
@@ -263,7 +277,7 @@ class MySQLClient:
         self.execute_update(query, params)
         return history_id
     
-    def get_histories(self, graph_id=None, user_id=None, limit=100, offset=0):
+    def get_histories(self, graph_id=None, user_id=None, limit=1000, offset=0):
         """获取历史记录"""
         query = "SELECT * FROM history_records WHERE 1=1"
         params = {}
@@ -431,6 +445,39 @@ class MySQLClient:
             traceback.print_exc()
             raise
     
+    def create_history_record(self, file_id, file_name, file_type="upload", task_id=""):
+        """创建上传类历史记录（上传接口调用），与 save_history_record 共用表结构。"""
+        try:
+            history_id = str(uuid.uuid4())
+            import json
+            operation_content = json.dumps({
+                "record_type": "upload",
+                "filename": file_name,
+                "file_id": file_id,
+                "fileId": file_id,
+            }, ensure_ascii=False)
+            query = """
+            INSERT INTO history_records (history_id, graph_id, user_id, query_text, answer_text, entity_count, relation_count, status, operation_type, operation_content)
+            VALUES (:history_id, :graph_id, :user_id, :query_text, :answer_text, :entity_count, :relation_count, :status, :operation_type, :operation_content)
+            """
+            params = {
+                "history_id": history_id,
+                "graph_id": None,  # 上传时暂无图谱，与 save_history_record 一致；若表 NOT NULL 需改表或占位 UUID
+                "user_id": "default_user",
+                "query_text": file_name,
+                "answer_text": "",
+                "entity_count": 0,
+                "relation_count": 0,
+                "status": "pending",
+                "operation_type": "create",
+                "operation_content": operation_content,
+            }
+            self.execute_update(query, params)
+            return history_id
+        except Exception as e:
+            logger.error(f"创建上传历史记录失败: {e}")
+            raise
+
     def save_history_record(self, data):
         """保存历史记录"""
         try:
@@ -453,9 +500,9 @@ class MySQLClient:
             
             # 设置operation_type，默认值为'query'
             record_type = data.get('type', '')
-            if record_type == 'chat' or record_type == 'graph':
+            if record_type == 'chat' or record_type == 'graph' or record_type == 'graph_query':
                 operation_type = 'query'
-            elif record_type == 'upload':
+            elif record_type == 'upload' or record_type == 'graph_build':
                 operation_type = 'create'
             else:
                 operation_type = 'query'  # 默认值
@@ -464,9 +511,12 @@ class MySQLClient:
             if record_type == 'chat':
                 query_text = content.get('question', '') or data.get('title', '') or '未知查询'
                 answer_text = content.get('answer', '')
-            elif record_type == 'graph':
+            elif record_type == 'graph' or record_type == 'graph_query':
                 query_text = content.get('entity', '') or data.get('title', '') or '未知查询'
                 answer_text = ''  # 图谱查询可能没有直接的answer
+            elif record_type == 'graph_build':
+                query_text = content.get('graphName', '') or content.get('graphId', '') or data.get('title', '') or '新图谱'
+                answer_text = ''
             elif record_type == 'upload':
                 query_text = content.get('filename', '') or data.get('title', '') or '未知文件'
                 answer_text = ''  # 文件上传可能没有直接的answer
@@ -493,10 +543,15 @@ class MySQLClient:
                     content_relationships = content.get('relationships', [])
                     relation_count = len(content_relationships) if isinstance(content_relationships, list) else 0
                 # 对于图谱查询，检查是否有links或edges
-                if relation_count == 0 and record_type == 'graph':
+                if relation_count == 0 and record_type in ('graph', 'graph_query'):
                     links = content.get('links', [])
                     edges = content.get('edges', [])
                     relation_count = len(links) if isinstance(links, list) else len(edges) if isinstance(edges, list) else 0
+                # 对于图谱构建，使用 entities_created / relations_created
+                if relation_count == 0 and record_type == 'graph_build':
+                    relation_count = content.get('relations_created', 0)
+                if entity_count == 0 and record_type == 'graph_build':
+                    entity_count = content.get('entities_created', 0)
             
             # 把前端的完整 content（包含 type 信息）序列化成 JSON，保存到 operation_content
             # 这样 get_histories 就能准确识别类型了
@@ -547,6 +602,50 @@ class MySQLClient:
         except Exception as e:
             logger.error(f"更新历史记录状态失败: {e}")
             raise
+
+    # ---------- 知识库（多知识库）持久化 ----------
+    def create_kb_base(self, kb_id, name, user_id):
+        """创建知识库记录。表由 app 端 _ensure_knowledge_bases_table 创建。"""
+        query = """
+        INSERT INTO knowledge_bases (kb_id, name, user_id)
+        VALUES (:kb_id, :name, :user_id)
+        """
+        params = {"kb_id": kb_id, "name": name, "user_id": user_id}
+        self.execute_update(query, params)
+        return kb_id
+
+    def rename_kb_base(self, kb_id, name, user_id):
+        """重命名知识库（仅当归属当前 user_id 时更新）。"""
+        query = """
+        UPDATE knowledge_bases SET name = :name
+        WHERE kb_id = :kb_id AND user_id = :user_id
+        """
+        params = {"kb_id": kb_id, "name": name, "user_id": user_id}
+        return self.execute_update(query, params)
+
+    def list_kb_bases(self, user_id):
+        """按 user_id 列出知识库，按 created_at 升序。"""
+        query = """
+        SELECT kb_id, name, user_id, created_at
+        FROM knowledge_bases
+        WHERE user_id = :user_id
+        ORDER BY created_at ASC
+        """
+        rows = self.execute_query(query, {"user_id": user_id})
+        result = []
+        for r in rows:
+            created = r.get("created_at")
+            if hasattr(created, "isoformat"):
+                created_at = created.isoformat()
+            else:
+                created_at = str(created) if created else ""
+            result.append({
+                "id": r["kb_id"],
+                "name": r.get("name") or "未命名",
+                "user_id": r.get("user_id"),
+                "created_at": created_at,
+            })
+        return result
 
 # 单例模式
 mysql_client = None

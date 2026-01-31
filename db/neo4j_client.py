@@ -47,7 +47,7 @@ class Neo4jClient:
                 result = session.run("RETURN 1 AS num")
                 record = result.single()
                 if record and record["num"] == 1:
-                    logger.info("✓ Neo4j 连接验证成功")
+                    logger.info("[OK] Neo4j 连接验证成功")
                     return True
                 return False
         except Exception as e:

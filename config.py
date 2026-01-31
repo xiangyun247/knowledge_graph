@@ -57,6 +57,9 @@ LOG_DIR = BASE_DIR / "logs"
 for directory in [DATA_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, EXAMPLES_DATA_DIR, LOG_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
+# 文档知识库 Chroma 持久化目录（默认 DATA_DIR/chroma，可用 CHROMA_PERSIST_DIR 覆盖）
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "")
+
 # ==================== Neo4j 配置 ====================
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")

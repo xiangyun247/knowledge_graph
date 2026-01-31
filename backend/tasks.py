@@ -5,7 +5,7 @@ Celery 任务定义
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # 尝试导入Celery，用于生产环境
 celery_available = False
@@ -18,8 +18,138 @@ try:
 except ImportError:
     # 如果没有安装Celery，使用标准日志记录器
     logger = logging.getLogger(__name__)
-    
+
 logger.setLevel(logging.INFO)
+
+
+def build_single_file_kg(
+    task_id: str,
+    file_id: str,
+    text: str,
+    user_id: str,
+    task_store: Optional[Dict[str, Any]] = None,
+    task_store_lock: Optional[Any] = None,
+    file_idx: int = 0,
+    total_files: int = 1,
+    filename: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    单文件知识图谱构建（供线程池并行调用）。
+    每个调用使用独立的 Neo4j/LLM/MySQL 连接，线程安全。
+
+    Returns:
+        {"success": True, "file_id", "graph_id", "entities_created", "relations_created"}
+        或 {"success": False, "file_id", "error": "..."}
+    """
+    if not (text or "").strip():
+        return {"success": False, "file_id": file_id, "error": "文本为空"}
+    try:
+        from kg.builder import KnowledgeGraphBuilder
+        from db.neo4j_client import Neo4jClient
+        from llm.client import LLMClient
+        from db.mysql_client import MySQLClient
+
+        neo4j_client = Neo4jClient()
+        llm_client = LLMClient()
+        mysql_client = MySQLClient()
+        mysql_client.connect()
+        builder = KnowledgeGraphBuilder(
+            neo4j_client=neo4j_client,
+            llm_client=llm_client,
+        )
+        try:
+            result = builder.process_text(text)
+        finally:
+            if hasattr(neo4j_client, "close"):
+                neo4j_client.close()
+            if hasattr(llm_client, "close"):
+                llm_client.close()
+
+        entities = result.get("entities", [])
+        relations_raw = result.get("relations", [])
+        entities_count = len(entities)
+        relations_count = len(relations_raw)
+
+        graph_name = (filename or "").strip() or f"KnowledgeGraph_{file_id}"
+        graph_description = f"从文件 {graph_name} 构建的知识图谱"
+        graph_id = mysql_client.create_graph(
+            graph_name=graph_name,
+            description=graph_description,
+            data_source="PDF",
+            file_path=file_id,
+            user_id=user_id or "system",
+        )
+        nodes_for_db = []
+        seen_n = set()
+        for e in entities:
+            name = (e.get("name") or "").strip()
+            if not name or name in seen_n:
+                continue
+            seen_n.add(name)
+            nodes_for_db.append({
+                "id": name,
+                "name": name,
+                "type": (e.get("type") or "entity").strip(),
+                "category": (e.get("type") or "entity").strip().lower(),
+                "description": (e.get("description") or "").strip(),
+            })
+        relations_for_db = []
+        seen_r = set()
+        for r in relations_raw:
+            sub = (r.get("subject") or "").strip()
+            pred = (r.get("predicate") or "").strip()
+            obj = (r.get("object") or "").strip()
+            if not sub or not pred or not obj:
+                continue
+            rk = (sub, pred, obj)
+            if rk in seen_r:
+                continue
+            seen_r.add(rk)
+            relations_for_db.append({
+                "id": f"{sub}_{pred}_{obj}",
+                "source": sub,
+                "target": obj,
+                "relation": pred,
+            })
+        mysql_client.update_graph_data(
+            graph_id,
+            {"nodes": nodes_for_db, "relations": relations_for_db},
+        )
+        mysql_client.update_graph_status(
+            graph_id=graph_id,
+            status="completed",
+            entity_count=entities_count,
+            relation_count=relations_count,
+        )
+        if hasattr(mysql_client, "disconnect"):
+            mysql_client.disconnect()
+
+        if task_store is not None and task_id in task_store and task_store_lock is not None:
+            with task_store_lock:
+                task_store[task_id]["entities_created"] = (
+                    task_store[task_id].get("entities_created", 0) + entities_count
+                )
+                task_store[task_id]["relations_created"] = (
+                    task_store[task_id].get("relations_created", 0) + relations_count
+                )
+                if total_files > 0:
+                    task_store[task_id]["progress"] = 60 + int(30 * (file_idx + 1) / total_files)
+                task_store[task_id]["message"] = f"已完成文件 {file_id}"
+
+        logger.info(
+            f"文件 {file_id} 知识图谱构建完成: graph_id={graph_id}, "
+            f"entities={entities_count}, relations={relations_count}"
+        )
+        return {
+            "success": True,
+            "file_id": file_id,
+            "graph_id": graph_id,
+            "entities_created": entities_count,
+            "relations_created": relations_count,
+        }
+    except Exception as e:
+        logger.exception(f"单文件构建失败 file_id={file_id}: {e}")
+        return {"success": False, "file_id": file_id, "error": str(e)}
 
 
 def build_kg_from_hadoop(self, task_id: str, file_ids: List[str], hadoop_result: Dict[str, Any]) -> Dict[str, Any]:

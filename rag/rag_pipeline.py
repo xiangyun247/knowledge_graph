@@ -246,7 +246,7 @@ class RAGPipeline:
             # 1. 查询解析
             logger.info("步骤 1/4: 解析查询...")
             parsed_query = self.query_parser.parse(query)
-            logger.info(f"✓ 查询解析完成: 意图={parsed_query['intent']}, 实体数={len(parsed_query['entities'])}")
+            logger.info(f"[OK] 查询解析完成: 意图={parsed_query['intent']}, 实体数={len(parsed_query['entities'])}")
 
             # 2. 信息检索
             logger.info("步骤 2/4: 检索相关信息...")
@@ -256,17 +256,17 @@ class RAGPipeline:
                 use_vector=use_vector,
                 top_k=top_k or self.vector_top_k
             )
-            logger.info(f"✓ 信息检索完成: 共检索到 {len(retrieval_results)} 条信息")
+            logger.info(f"[OK] 信息检索完成: 共检索到 {len(retrieval_results)} 条信息")
 
             # 3. 构建上下文
             logger.info("步骤 3/4: 构建上下文...")
             context = self._build_context(retrieval_results, parsed_query)
-            logger.info(f"✓ 上下文构建完成: {len(context)} 字符")
+            logger.info(f"[OK] 上下文构建完成: {len(context)} 字符")
 
             # 4. 生成答案
             logger.info("步骤 4/4: 生成答案...")
             answer = self._generate_answer(query, context, parsed_query)
-            logger.info(f"✓ 答案生成完成: {len(answer)} 字符")
+            logger.info(f"[OK] 答案生成完成: {len(answer)} 字符")
 
             # 计算处理时间
             processing_time = time.time() - start_time

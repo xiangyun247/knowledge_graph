@@ -26,3 +26,5 @@ docker exec hadoop-namenode pip3 list | grep pdfplumber
 
 
 
+
+

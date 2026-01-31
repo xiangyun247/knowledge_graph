@@ -527,6 +527,12 @@ class EmbeddingClient:
         if not self.local_encoder and not self.api_client:
             logger.warning("[WARN] Embedding model not configured, will use placeholder vectors (vector retrieval will be unavailable)")
 
+    def _to_list_of_floats(self, emb) -> List[float]:
+        """将 numpy/torch 向量转为 Python list[float]，Chroma 要求元素为 int/float。"""
+        if hasattr(emb, 'tolist') and callable(getattr(emb, 'tolist')):
+            return emb.tolist()
+        return [float(x) for x in emb]
+
     def get_embedding(self, text: str) -> List[float]:
         """
         获取文本的嵌入向量
@@ -546,13 +552,8 @@ class EmbeddingClient:
                     convert_to_numpy=False,  # 返回 Python list
                     normalize_embeddings=True  # 归一化向量，提高相似度计算准确性
                 )
-                # 确保返回 Python list
-                if isinstance(embedding, list):
-                    return embedding
-                elif hasattr(embedding, 'tolist'):
-                    return embedding.tolist()
-                else:
-                    return list(embedding)
+                # 确保返回 Python list of float（Chroma 要求，不能含 tensor）
+                return self._to_list_of_floats(embedding)
             except Exception as e:
                 logger.error(f"本地模型编码失败: {e}，尝试使用 API")
                 # 降级到 API
@@ -606,10 +607,10 @@ class EmbeddingClient:
                     batch_size=32,  # 批量处理，提高效率
                     show_progress_bar=False
                 )
-                # 转换为列表格式
-                if hasattr(embeddings, 'tolist'):
-                    return [emb.tolist() for emb in embeddings]
-                return [list(emb) for emb in embeddings]
+                # 转换为 List[List[float]]，Chroma 要求元素为 int/float，不能含 tensor
+                if hasattr(embeddings, 'tolist') and callable(getattr(embeddings, 'tolist')):
+                    return embeddings.tolist()
+                return [self._to_list_of_floats(emb) for emb in embeddings]
             except Exception as e:
                 logger.error(f"本地模型批量编码失败: {e}，尝试使用 API")
                 if self.api_client:

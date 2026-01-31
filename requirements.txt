@@ -12,3 +12,10 @@ pdfplumber==0.10.3
 mysql-connector-python==8.2.0  # MySQL数据库连接
 sqlalchemy==2.0.23  # SQL ORM框架
 pymysql==1.1.2
+numpy<2  # Chroma 0.4.x 与 NumPy 2.0 不兼容（np.float_ 已移除）
+chromadb>=0.4.0,<0.5.0  # 文档知识库向量存储（嵌入式）
+# LangGraph Agent
+langgraph>=0.2.0,<0.3
+langchain-core>=0.3.0,<0.4
+langchain-openai>=0.2.0,<0.3  # 兼容 DeepSeek 的 OpenAI 接口
+loguru>=0.7.0  # 日志（backend.app）
