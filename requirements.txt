@@ -1,9 +1,9 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
+pydantic>=2.5.2,<3.0.0  # langchain-core 0.3.x 要求 >=2.5.2；与 FastAPI/Chromadb 兼容
 pydantic-settings==2.1.0
 neo4j==5.14.1
-openai==1.3.0  # DeepSeek API 兼容 OpenAI SDK
+openai>=1.58.1,<2.0.0  # langchain-openai 0.2.x 要求 >=1.58.1；DeepSeek 兼容 OpenAI SDK
 sentence-transformers==2.2.2  # 本地 embedding
 torch>=2.0.0  # sentence-transformers 依赖
 python-multipart==0.0.6  # 文件上传
@@ -12,8 +12,8 @@ pdfplumber==0.10.3
 mysql-connector-python==8.2.0  # MySQL数据库连接
 sqlalchemy==2.0.23  # SQL ORM框架
 pymysql==1.1.2
-numpy<2  # Chroma 0.4.x 与 NumPy 2.0 不兼容（np.float_ 已移除）
-chromadb>=0.4.0,<0.5.0  # 文档知识库向量存储（嵌入式）
+numpy<2  # 与部分依赖兼容；chromadb 0.5.x 可配合 pydantic 2
+chromadb>=0.5.0,<0.6.0  # 文档知识库向量存储（0.5.x 支持 pydantic 2）
 # LangGraph Agent
 langgraph>=0.2.0,<0.3
 langchain-core>=0.3.0,<0.4

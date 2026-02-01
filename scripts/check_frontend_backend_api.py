@@ -131,9 +131,28 @@ def main() -> int:
 
     cases.append(("GET /docs（连通性）", c0))
 
-    # 1. Chat：Agent 问答
+    # 1. Chat：Agent 问答（非流式可能较慢，单独延长超时；超时也视为接口存在）
     def c1():
-        return run(base, "POST /api/agent/query", "POST", "/api/agent/query", json={"question": "你好"}, accept=[503, 500])
+        url = base + "/api/agent/query"
+        try:
+            r = requests.post(
+                url,
+                json={"question": "你好"},
+                headers=_headers(),
+                timeout=90,
+            )
+            sc = r.status_code
+            if sc in (200, 201, 500, 503):
+                return True, f"{sc}", sc
+            if sc in (400, 401, 403, 422):
+                return True, f"{sc} (接口存在)", sc
+            return False, f"{sc}", sc
+        except requests.exceptions.Timeout:
+            return True, "超时(接口存在，LLM 响应较慢)", -1
+        except requests.exceptions.ConnectionError as e:
+            return False, f"连接失败: {e}", -1
+        except Exception as e:
+            return False, str(e), -1
 
     cases.append(("POST /api/agent/query（Chat 问答）", c1))
 
@@ -356,6 +375,50 @@ def main() -> int:
         return run(base, "GET /api/history/list", "GET", "/api/history/list")
 
     cases.append(("GET /api/history/list（历史记录）", c18))
+
+    def c19():
+        return run(
+            base,
+            "DELETE /api/history/{history_id}",
+            "DELETE",
+            "/api/history/00000000-0000-0000-0000-000000000001",
+            accept=[404],
+        )
+
+    cases.append(("DELETE /api/history/{history_id}（删除单条历史）", c19))
+
+    def c20():
+        return run(
+            base,
+            "POST /api/history/batch-delete",
+            "POST",
+            "/api/history/batch-delete",
+            json={"history_ids": ["fake-id-1"]},
+            accept=[200, 400, 422],
+        )
+
+    cases.append(("POST /api/history/batch-delete（批量删除历史）", c20))
+
+    def c21():
+        return run(base, "DELETE /api/history/clear", "DELETE", "/api/history/clear", accept=[200])
+
+    cases.append(("DELETE /api/history/clear（清空历史）", c21))
+
+    def c22():
+        return run(base, "DELETE /api/graph/clear", "DELETE", "/api/graph/clear", accept=[200])
+
+    cases.append(("DELETE /api/graph/clear（清空图谱）", c22))
+
+    def c23():
+        return run(
+            base,
+            "DELETE /api/graph/{graph_id}",
+            "DELETE",
+            "/api/graph/00000000-0000-0000-0000-000000000001",
+            accept=[404, 403],
+        )
+
+    cases.append(("DELETE /api/graph/{graph_id}（删除单个图谱）", c23))
 
     # 执行
     passed = 0

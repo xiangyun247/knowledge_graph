@@ -1379,6 +1379,66 @@ async def update_history_status(history_id: str, body: Optional[dict] = Body(Non
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# 注意：必须先注册字面路径 /clear，再注册 /{history_id}，否则 clear 会被当作 history_id 匹配
+@app.delete("/api/history/clear", tags=["历史记录"])
+async def clear_history_all(request: Request):
+    """清空历史记录；可按当前用户清空或清空全部（由前端传参或后端策略决定，此处清空全部）"""
+    try:
+        if not mysql_client or not hasattr(mysql_client, "clear_history"):
+            raise HTTPException(status_code=501, detail="清空历史功能未就绪")
+        # 可选：仅清空当前用户 current_user_id = get_current_user_id(request); mysql_client.clear_history(user_id=current_user_id)
+        n = mysql_client.clear_history(user_id=None)
+        return {"status": "success", "message": f"已清空 {n} 条历史", "deleted": n}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"清空历史记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/history/{history_id}", tags=["历史记录"])
+async def delete_history_one(history_id: str):
+    """删除单条历史记录"""
+    if not history_id or history_id == "undefined":
+        raise HTTPException(status_code=400, detail="历史记录 ID 无效")
+    try:
+        if not mysql_client or not hasattr(mysql_client, "delete_history"):
+            raise HTTPException(status_code=501, detail="历史删除功能未就绪")
+        n = mysql_client.delete_history(history_id)
+        if n == 0:
+            raise HTTPException(status_code=404, detail="历史记录不存在")
+        return {"status": "success", "message": "已删除", "deleted": 1}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除历史记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BatchDeleteHistoryBody(BaseModel):
+    """批量删除历史记录请求体，兼容 ids / history_ids"""
+    history_ids: Optional[List[str]] = Field(None, description="历史记录 ID 列表")
+    ids: Optional[List[str]] = Field(None, description="历史记录 ID 列表（兼容前端）")
+
+
+@app.post("/api/history/batch-delete", tags=["历史记录"])
+async def batch_delete_history(body: BatchDeleteHistoryBody):
+    """批量删除历史记录"""
+    ids = (body.history_ids or body.ids or [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="请提供 history_ids 或 ids")
+    try:
+        if not mysql_client or not hasattr(mysql_client, "delete_history_batch"):
+            raise HTTPException(status_code=501, detail="批量删除功能未就绪")
+        n = mysql_client.delete_history_batch(ids)
+        return {"status": "success", "message": f"已删除 {n} 条", "deleted": n}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"批量删除历史记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # 获取知识图谱列表API
 @app.get("/api/kg/list", tags=["知识图谱"])
 async def get_kg_list():
@@ -1448,6 +1508,47 @@ async def get_graph_list(request: Request):
         return {"status": "success", "data": {"list": list_, "total": len(list_)}}
     except Exception as e:
         logger.error(f"获取图谱列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/graph/clear", tags=["知识图谱"])
+async def clear_graph_all(request: Request):
+    """清空所有图谱：Neo4j 全部删除 + MySQL knowledge_graphs 清空"""
+    try:
+        if neo4j_client:
+            neo4j_client.delete_all()
+        if mysql_client and hasattr(mysql_client, "clear_all_graphs"):
+            n = mysql_client.clear_all_graphs()
+        else:
+            n = 0
+        return {"status": "success", "message": "已清空图谱", "deleted_graphs": n}
+    except Exception as e:
+        logger.error(f"清空图谱失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/graph/{graph_id}", tags=["知识图谱"])
+async def delete_graph_one(request: Request, graph_id: str):
+    """按 graph_id 删除单个图谱（仅 MySQL；Neo4j 当前未按图隔离则仅删元数据）"""
+    if not graph_id or graph_id == "undefined":
+        raise HTTPException(status_code=400, detail="图谱 ID 无效")
+    try:
+        if not mysql_client:
+            raise HTTPException(status_code=501, detail="图谱删除功能未就绪")
+        current_user_id = get_current_user_id(request)
+        rec = mysql_client.get_graph_by_id(graph_id)
+        if not rec:
+            rec = mysql_client.get_graph_by_data_source(graph_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail="知识图谱不存在")
+        if rec.get("user_id") and rec.get("user_id") != current_user_id:
+            raise HTTPException(status_code=403, detail="无权删除该图谱")
+        mysql_client.delete_graph(graph_id)
+        return {"status": "success", "message": "已删除", "graph_id": graph_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除图谱失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

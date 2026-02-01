@@ -254,10 +254,15 @@ class MySQLClient:
             raise
     
     def delete_graph(self, graph_id):
-        """删除知识图谱"""
+        """删除知识图谱（仅 MySQL 元数据；Neo4j 若按图隔离需在调用方处理）"""
         query = "DELETE FROM knowledge_graphs WHERE graph_id = :graph_id"
         params = {"graph_id": graph_id}
         return self.execute_update(query, params)
+
+    def clear_all_graphs(self):
+        """清空所有知识图谱（MySQL knowledge_graphs 表）"""
+        query = "DELETE FROM knowledge_graphs"
+        return self.execute_update(query, {})
     
     # 历史记录相关方法
     def create_history(self, graph_id, user_id, operation_type, operation_content=""):
@@ -390,6 +395,31 @@ class MySQLClient:
             frontend_records.append(frontend_record)
         
         return frontend_records
+
+    def delete_history(self, history_id):
+        """删除单条历史记录"""
+        query = "DELETE FROM history_records WHERE history_id = :history_id"
+        params = {"history_id": history_id}
+        return self.execute_update(query, params)
+
+    def delete_history_batch(self, history_ids):
+        """批量删除历史记录。history_ids: 主键列表"""
+        if not history_ids:
+            return 0
+        placeholders = ", ".join([f":id_{i}" for i in range(len(history_ids))])
+        query = f"DELETE FROM history_records WHERE history_id IN ({placeholders})"
+        params = {f"id_{i}": hid for i, hid in enumerate(history_ids)}
+        return self.execute_update(query, params)
+
+    def clear_history(self, user_id=None):
+        """清空历史记录。user_id 为 None 时清空全部，否则仅清空该用户"""
+        if user_id is not None:
+            query = "DELETE FROM history_records WHERE user_id = :user_id"
+            params = {"user_id": user_id}
+        else:
+            query = "DELETE FROM history_records"
+            params = {}
+        return self.execute_update(query, params)
     
     def get_history_stats(self):
         """

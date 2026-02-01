@@ -1,30 +1,21 @@
-﻿FROM python:3.10-slim
+FROM python:3.10-slim
 
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖（精简版，不装编译工具，先测试 Hadoop 功能）
-RUN apt-get update && apt-get install -y \
+# 安装系统依赖（curl 可用于健康检查等；不安装 Docker CLI，避免构建时外网 TLS 失败）
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    wget \
-    tar \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Docker CLI（轻量级，只下载二进制文件，不装整个 docker.io）
-RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz && \
-    tar -xz -C /tmp -f /tmp/docker.tgz && \
-    mv /tmp/docker/docker /usr/local/bin/docker && \
-    chmod +x /usr/local/bin/docker && \
-    rm -rf /tmp/docker.tgz /tmp/docker
-
-# 复制依赖文件（使用精简版，不包含需要编译的包）
-COPY requirements-minimal.txt requirements.txt
+# 复制依赖文件（与 Celery 统一使用 requirements.txt，保证 Agent/知识库等依赖完整）
+COPY requirements.txt .
 
 # 配置 pip 使用国内镜像源（解决网络问题）
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn
 
-# 安装 Python 依赖（精简版，快速构建）
+# 安装 Python 依赖（完整版，一次构建通过；镜像较大时可考虑 requirements-minimal.txt 做轻量版）
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码

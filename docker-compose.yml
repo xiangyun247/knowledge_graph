@@ -133,7 +133,7 @@ services:
 
   # ==================== 数据库 ====================
   
-  # Neo4j
+  # Neo4j（若启动报错 exit 1，多为旧数据卷导致入口脚本二次初始化失败，可先删卷再起：docker volume rm knowledge_gragh_neo4j_data）
   neo4j:
     image: neo4j:5.15
     container_name: kg-neo4j
@@ -141,39 +141,41 @@ services:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
     environment:
-      - NEO4J_AUTH=neo4j/a2303548451  # 默认密码，生产环境请修改
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-a2303548451}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=512m
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
     networks:
       - kg-network
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "a2303548451", "RETURN 1"]
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-a2303548451}", "RETURN 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
-  # MySQL
+  # MySQL（init_mysql.sql 创建并使用的库为 knowledge_graph_system，此处与之一致）
   mysql:
     image: mysql:8.0
     container_name: kg-mysql
     ports:
       - "3307:3306"  # 外部端口改为 3307，避免与本地 MySQL 冲突
     environment:
-      - MYSQL_ROOT_PASSWORD=root123  # 默认密码，生产环境请修改
-      - MYSQL_DATABASE=knowledge_graph
-      - MYSQL_USER=kg_user
-      - MYSQL_PASSWORD=kg_password
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root123}
+      - MYSQL_DATABASE=knowledge_graph_system
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
     volumes:
       - mysql_data:/var/lib/mysql
       - ./MYSQL/init_mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - kg-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -193,14 +195,14 @@ services:
       # Neo4j 配置
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=a2303548451
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-a2303548451}
       - NEO4J_DATABASE=neo4j
       # MySQL 配置
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
-      - MYSQL_USER=kg_user
-      - MYSQL_PASSWORD=kg_password
-      - MYSQL_DATABASE=knowledge_graph
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
+      - MYSQL_DATABASE=knowledge_graph_system
       # Redis 配置
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -246,8 +248,14 @@ services:
       # Neo4j 配置
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=a2303548451
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-a2303548451}
       - NEO4J_DATABASE=neo4j
+      # MySQL 配置（任务可能写历史/图谱，与 backend 一致）
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
+      - MYSQL_DATABASE=knowledge_graph_system
       # Redis 配置
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -267,9 +275,14 @@ services:
     networks:
       - kg-network
     depends_on:
-      - redis
-      - neo4j
-      - hadoop-namenode
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      hadoop-namenode:
+        condition: service_healthy
     command: celery -A backend.celery_app worker --loglevel=info --concurrency=4
     restart: unless-stopped
 

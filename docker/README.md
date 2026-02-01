@@ -15,14 +15,14 @@ docker/
 
 ### Dockerfile.backend
 - 用于构建 FastAPI 后端服务
-- 基于 Python 3.9-slim
-- 包含所有后端依赖
+- 基于 Python 3.10-slim
+- 使用 `requirements.txt`，包含所有后端依赖（含 Agent、Chroma 等）
 - 暴露端口 5001
 
 ### Dockerfile.celery
 - 用于构建 Celery Worker
-- 基于 Python 3.9-slim
-- 包含 Celery 和 Redis 依赖
+- 基于 Python 3.10-slim
+- 使用 `requirements.txt`，与 backend 依赖一致；包含 Celery、Redis、MySQL 等
 - 用于异步任务处理
 
 ### Dockerfile.hadoop-python
