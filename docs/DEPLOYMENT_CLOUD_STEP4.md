@@ -140,20 +140,30 @@
 
 **方式 B：云主机上 Git clone（若代码在 GitHub/Gitee）**
 
-在云主机上：
+在云主机上只部署后端 API 时，克隆**后端**仓库即可：
 
 ```bash
 cd /root
 apt install -y git
-git clone https://github.com/你的用户名/knowledge_gragh.git
-cd knowledge_gragh
+# 后端（知识图谱 + API）
+git clone https://github.com/xiangyun247/knowledge_graph.git
+cd knowledge_graph
+```
+
+若需在同一台机器上部署前端页面，可再克隆**前端**仓库（例如放到 `/root/knowledge_gragh_frontend`）：
+
+```bash
+cd /root
+git clone https://github.com/xiangyun247/knowledge_gragh_frontend.git
+cd knowledge_gragh_frontend
+# 前端需单独构建并配 Nginx 等，见 TODO_PHASES 后续步骤
 ```
 
 ### 步骤 6：在云主机上配置 .env
 
-1. 在云主机上进入项目目录：
+1. 在云主机上进入**后端**项目目录（若用方式 B 克隆，目录为 `knowledge_graph`）：
    ```bash
-   cd /root/knowledge_gragh
+   cd /root/knowledge_graph
    ```
 
 2. 复制示例环境变量并编辑：
@@ -173,7 +183,7 @@ cd knowledge_gragh
 
 当前你项目是「全栈」：Hadoop + MySQL + Redis + Neo4j + Backend + Celery。在 1 核 2G 上全开会很吃紧。项目里已提供**精简版 compose 文件**，只起 MySQL、Redis、Neo4j、backend（不启动 Hadoop、Celery）。
 
-在云主机上，仍在项目目录 `/root/knowledge_gragh` 下执行：
+在云主机上，仍在**后端**项目目录 `/root/knowledge_graph` 下执行：
 
 ```bash
 # 使用精简版 compose（仅 backend + MySQL + Redis + Neo4j）
@@ -199,7 +209,7 @@ docker compose -f docker-compose.cloud-minimal.yml ps
 
 - 先停掉精简版（可选）：
   ```bash
-  cd /root/knowledge_gragh
+  cd /root/knowledge_graph
   docker compose -f docker-compose.cloud-minimal.yml down
   ```
 - 再按**全栈**启动：
