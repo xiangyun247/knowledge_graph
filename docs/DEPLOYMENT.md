@@ -150,8 +150,40 @@ docker-compose ps
 
 ---
 
-## 七、相关文档
+## 七、持久化与备份
+
+### 1. 数据卷（持久化）
+
+以下服务使用 **named volume**，数据在 `docker compose down` 后仍保留；仅在使用 `docker compose down -v` 或 `docker volume rm` 时才会删除。
+
+| 服务 | 卷名（前缀为项目目录名，如 `knowledge_graph_`） | 说明 |
+|------|-----------------------------------------------|------|
+| **MySQL** | `mysql_data` | 映射到容器内 `/var/lib/mysql`，库表与用户数据均在此。 |
+| **Neo4j** | `neo4j_data`、`neo4j_logs` | 图数据与日志。 |
+| **Redis** | `redis_data` | 映射到容器内 `/data`，已开启 `appendonly yes`，重启不丢。 |
+| **HDFS**（仅全栈） | `namenode_data`、`datanode_data` | 全栈 `docker-compose.yml` 中 HDFS 元数据与块数据。 |
+
+- **精简版**（`docker-compose.cloud-minimal.yml`）仅使用：`redis_data`、`neo4j_data`、`neo4j_logs`、`mysql_data`。
+- 查看卷：`docker volume ls`（名称格式为 `项目名_卷名`，如 `knowledge_graph_mysql_data`）。
+- 云主机上若需长期保留数据，避免对上述卷执行 `down -v`；如需迁移，可备份卷或使用云盘挂载到宿主机目录再在 compose 中改为 bind mount。
+
+### 2. 备份策略建议
+
+| 组件 | 方式 | 示例命令 / 说明 |
+|------|------|-----------------|
+| **MySQL** | mysqldump | `docker exec kg-mysql mysqldump -u root -p<MYSQL_ROOT_PASSWORD> --single-transaction --databases knowledge_graph_system > backup_mysql_$(date +%Y%m%d).sql` |
+| **Neo4j** | 卷备份或 Cypher 导出 | 社区版可定期备份 `neo4j_data` 卷（如 `docker run --rm -v knowledge_graph_neo4j_data:/data -v $(pwd):/backup alpine tar czf /backup/neo4j_data_$(date +%Y%m%d).tar.gz -C /data .`）；或按业务用 Cypher 导出关键子图。 |
+| **Redis** | RDB 文件 | 已开启 AOF，数据在 `redis_data` 卷中；需冷备份时可 `docker cp kg-redis:/data ./redis_backup` 或定期 `redis-cli BGSAVE` 后拷贝 RDB。 |
+
+- 建议将备份文件存到对象存储或另一台机器，并按周期（如每日/每周）执行。
+- 恢复：MySQL 用 `mysql ... < backup_xxx.sql`；Neo4j 用 `neo4j-admin load`；Redis 用替换 RDB 后重启。
+
+---
+
+## 八、相关文档
 
 - **Docker 步骤 1**：`docs/DOCKER_STEP1.md`（compose 与 Dockerfile、MySQL 库名、依赖）
 - **Docker 步骤 2**：`docs/DOCKER_STEP2.md`（环境变量与密钥管理）
+- **云主机与后端上云**：`docs/DEPLOYMENT_CLOUD_STEP4.md`（学生向简明步骤）
+- **前端上云（步骤 8）**：`docs/DEPLOYMENT_FRONTEND_STEP8.md`（Nginx 托管 Vue 静态站 + /api 反向代理）
 - **API 接口**：`docs/API.md`；启动后也可查看 <http://localhost:5001/docs> 。

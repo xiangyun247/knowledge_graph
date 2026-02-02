@@ -242,6 +242,9 @@ docker compose -f docker-compose.cloud-minimal.yml ps
 - **问：想用域名 + HTTPS 可以吗？**  
   答：可以，那是 TODO_PHASES 里的「步骤 9」；需要先有域名，再在云主机装 Nginx、申请证书（如 Let’s Encrypt），把 80/443 反代到 5001。当前步骤 4 只做到「用 IP:5001 能访问」即可。
 
+- **问：云上数据会丢吗？怎么做备份？**  
+  答：MySQL、Neo4j、Redis 均使用 **named volume**（如 `knowledge_graph_mysql_data`），`docker compose down` 不会删数据；只有 `down -v` 或手动 `docker volume rm` 才会删。备份方式（mysqldump、Neo4j 卷备份、Redis RDB）见 **`docs/DEPLOYMENT.md` 第七节「持久化与备份」**。
+
 ---
 
 ## 六、小结（对应你的三个问题）
@@ -251,3 +254,5 @@ docker compose -f docker-compose.cloud-minimal.yml ps
 3. **详细步骤**：上面第三节已按「注册 → 买机器 → 开放端口 → SSH → 装 Docker → 上传项目 → 配 .env → 精简启动 → 浏览器验证」给出逐步操作；若你选阿里云，把「轻量应用服务器」换成对应产品名，其余思路一致。
 
 如果你在某一步卡住（例如控制台界面和文档不一致、或报错信息看不懂），可以把**当前执行到哪一步、报错原文或截图**发出来，再按你的实际情况往下细化。
+
+**下一步（步骤 8：前端上云）**：后端验证通过后，若希望用户通过浏览器直接打开前端页面（而非只访问 `http://IP:5001/docs`），请按 **`docs/DEPLOYMENT_FRONTEND_STEP8.md`** 在云主机上克隆前端、构建、配置 Nginx 并开放 80 端口。

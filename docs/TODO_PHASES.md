@@ -30,7 +30,7 @@
 | 5 | **镜像构建与推送** | 在 CI 或本机使用 `docker build` 构建 backend、celery、hadoop 等镜像；打 tag 并推送到云厂商镜像仓库（或 Docker Hub），供云上 `docker-compose pull` 使用。 |
 | 6 | **云上 Compose 部署** | 在云主机上拉取代码或仅拉取 `docker-compose.yml` + `.env`；执行 `docker-compose up -d`，确认所有服务 healthy；通过公网 IP:5001 访问 API 做冒烟测试。 |
 | 7 | **持久化与备份** | 确认 MySQL、Neo4j、Redis、HDFS 等数据目录使用 named volume 或挂载云盘；文档中说明备份策略（如 mysqldump、Neo4j dump、Redis RDB）。 |
-| 8 | **前端上云（可选）** | 将 Vue 前端构建为静态资源，部署到云上 Nginx 或对象存储+CDN；配置 Nginx 反向代理到后端 `http://backend:5001`，或前端 baseURL 指向云上后端地址。 |
+| 8 | **前端上云（可选）** | 将 Vue 前端构建为静态资源，部署到云上 Nginx 或对象存储+CDN；配置 Nginx 反向代理到后端 `http://backend:5001`，或前端 baseURL 指向云上后端地址。详见 **`docs/DEPLOYMENT_FRONTEND_STEP8.md`**。 |
 | 9 | **HTTPS 与域名（可选）** | 为域名申请证书，在 Nginx 或 LB 上配置 HTTPS，将 API 和前端统一通过域名访问。 |
 
 ---

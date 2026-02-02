@@ -23,6 +23,15 @@
 - **自动化测试**：`tests/` 目录，运行 `pytest tests/`，详见 [tests/README.md](tests/README.md)
 - **前后端联调**：后端默认通过 `python run.py` 启动并监听 5001；先执行 `python scripts/check_frontend_backend_api.py` 确认 19 项接口通过，再按前端项目 `docs/FRONTEND_E2E_TEST_CHECKLIST.md` 做手工端到端测试
 
+## 云上演示模式（低配服务器）
+
+> 适用于 2 核 2G 等轻量云主机，用最少资源在公网展示系统界面和基础功能。
+
+- **推荐部署方式**：使用 `docker-compose.cloud-minimal.yml` 仅启动 **backend + MySQL + Redis + Neo4j**，前端通过 `npm run build` 生成 `dist/` 后交给云主机上的 **Nginx** 托管（详见 `docs/DEPLOYMENT_CLOUD_STEP4.md` 与 `docs/DEPLOYMENT_FRONTEND_STEP8.md`）。
+- **适合在云上演示的功能**：登录 / 注册、知识图谱浏览与搜索、历史记录、上传入口与页面流转等——即「看得见、点得动」的主要业务流程。
+- **不推荐在 2G 机器上长期开启的功能**：Agent 问答（`/api/agent/query` / `/api/agent/query/stream`）及大规模离线构建，这些链路会同时占用 LLM、Neo4j、MySQL 等资源，在 2G 内存下容易导致整机卡死。
+- **建议做法**：在本地或更高配环境演示「问答 + 大规模构建」效果；云主机上以「演示模式」为主，必要时可以暂时去掉 `.env` 中的 `DEEPSEEK_API_KEY`，让后端快速返回「服务不可用」的提示，由前端给出友好文案。
+
 ## 系统架构
 
 ```
