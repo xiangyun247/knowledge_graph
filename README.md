@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-本项目是一个功能完整的大规模医学知识图谱生成与智能问答系统，基于 Docker、Hadoop 和 Celery 构建，实现了从 PDF/文本数据到知识图谱的全流程自动化。智能问答部分采用 **基于 LangGraph 的 Agent 架构**：通过 Agent 编排 LLM 与多种工具（图谱检索、文献检索等），支持多轮对话、指代消解与流式输出。
+本项目是一个功能完整的大规模医学知识图谱生成与智能问答系统，基于 Docker、Hadoop 和 Celery 构建，实现了从 PDF/文本数据到知识图谱的全流程自动化。智能问答部分采用基于 LangGraph 的 Agent 架构：通过 Agent 编排 LLM 与多种工具（图谱检索、文献检索等），支持多轮对话、指代消解与流式输出。
 
 ### 核心功能
 
@@ -47,25 +47,25 @@
 │  ┌───────────────────────────────────────────────────────────────────┐   │
 │  │                        FastAPI 服务                              │   │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │   │
-│  │  │ 健康检查│  │ 统计查询│  │ 实体搜索│  │ Agent问答│  │ 数据导入│   │   │
+│  │  │ 健康检查│   │ 统计查询│   │ 实体搜索│  │ Agent问答│  │ 数据导入│   │   │
 │  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │   │
 │  └───────────────────────────────────────────────────────────────────┘   │
 └───────┬───────────────────────────────────────────────────────────────────┘
         │
 ┌───────▼───────────────────────────────────────────────────────────────────┐
-│                                业务逻辑层                                │
+│                                业务逻辑层                                  │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐   │
-│  │    知识图谱生成  │  │  Agent（LangGraph）│  │  RAG 工具（图/文献）│  │ 任务管理 │   │
+│  │    知识图谱生成  │  │  Agent（LangGraph）││RAG 工具（图/文献│   │ 任务管理 │   │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────┘   │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐   │
-│  │    实体提取器    │  │  LLM + bind_tools │  │  图检索/向量检索  │  │ 会话记忆 │   │
+│  │    实体提取器    │  │ LLM + bind_tools│  │  图检索/向量检索 │  │ 会话记忆 │   │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────┘   │
 └───────┬───────────────────────────────────────────────────────────────────┘
         │
 ┌───────▼───────────────────────────────────────────────────────────────────┐
 │                                数据处理层                                │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐   │
-│  │    Hadoop 分布式处理│  │    Celery 异步任务│  │    PDF 提取处理  │  │ 文本处理 │   │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐ │
+│  │ Hadoop 分布式处理│  │Celery 异步任务   │  │  PDF 提取处理    │  │ 文本处理│  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────┘   │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐             │   │
 │  │    文本清理      │  │    文本分块      │  │    实体关系提取  │             │   │
@@ -75,7 +75,7 @@
 ┌───────▼───────────────────────────────────────────────────────────────────┐
 │                                数据存储层                                │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐   │
-│  │    Neo4j 图数据库  │  │    MySQL 关系数据库  │  │  Chroma 向量库   │  │ 本地存储 │   │
+│  │  Neo4j 图数据库  │  │MySQL 关系数据库  │  │ Chroma 向量库   │  │ 本地存储 │   │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────┘   │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
@@ -115,7 +115,7 @@
   4. 写入 Neo4j，并将图谱元数据与 graph_data（节点/边）写入 MySQL `knowledge_graphs`
   5. 单文件构建：`POST /api/kg/build` 异步执行；批量构建：Hadoop 集成接口使用已提取文本并行调用 `build_single_file_kg`，不跑真实 Hadoop MR
 
-### 2. Agent 智能问答（由 RAG 升级为 Agent 架构）
+### 2. Agent 智能问答
 
 **核心功能**：基于 **LangGraph Agent** 的智能问答，替代原有「固定 RAG 流水线」，由 LLM 自主决定是否调用工具、调用哪些工具以及如何组合结果。
 
@@ -143,9 +143,9 @@
 
 - **认证**：`POST /api/auth/register`、`POST /api/auth/login`（MySQL users 表，SHA256 密码）
 - **智能问答**：`POST /api/agent/query`（非流式）、`POST /api/agent/query/stream`（SSE 流式）；可选 `session_id`、`deep_think`；`POST /api/query` 为传统 RAG 兼容接口
-- **图谱**：`GET /api/graph/list`、`GET /api/graph/data`（支持 `graph_id`，不传则合并当前用户全部图谱；数据来自 MySQL `knowledge_graphs.graph_data`）；`GET /api/kg/list`、`GET /api/kg/{graph_id}/visualize` 等；**说明**：前端「清除图谱」调用的 `DELETE /api/graph/clear` 当前未实现，计划补充
+- **图谱**：`GET /api/graph/list`、`GET /api/graph/data`（支持 `graph_id`，不传则合并当前用户全部图谱；数据来自 MySQL `knowledge_graphs.graph_data`）；`GET /api/kg/list`、`GET /api/kg/{graph_id}/visualize` 等；
 - **实体搜索**：`GET /api/search/entities`（优先 Neo4j，回退 MySQL 图谱节点）
-- **历史记录**：`GET /api/history/list`（type、status、limit 默认 1000、offset）、`POST /api/history/save`、`PUT /api/history/{history_id}/status`、`GET /api/history/search`；单条/批量删除与清空接口计划补充
+- **历史记录**：`GET /api/history/list`（type、status、limit 默认 1000、offset）、`POST /api/history/save`、`PUT /api/history/{history_id}/status`、`GET /api/history/search`；
 - **文件与构建**：`POST /api/upload`、`POST /api/kg/build`（单文件异步构建）、`GET /api/kg/build/progress/{task_id}`；Hadoop 集成见 `backend.hadoop_api`（批量上传 HDFS、批量构建任务状态）
 - **文档知识库**：`GET/POST/PATCH /api/kb/bases`、`POST /api/kb/documents/ingest`、`GET /api/kb/documents/search`、`GET /api/kb/documents/list`、`DELETE /api/kb/documents/{doc_id}`、`POST /api/kb/documents/reindex`（Chroma 向量库，支持多知识库与 user_id 过滤）
 - **数据模板**：`GET /api/templates/{template_type}`（disease、symptom、medicine、relation）
@@ -438,7 +438,7 @@ python scripts/check_hadoop_env.py
 ### 1. 已实现功能
 
 - ✅ 知识图谱生成：支持从多种数据源生成医学知识图谱
-- ✅ **Agent 智能问答**：由简单 RAG 升级为 LangGraph Agent，LLM 自主调用 RAG 工具（图检索、文献检索），支持多轮对话与流式输出
+- ✅ Agent 智能问答：兼容 RAG 检索与 LangGraph Agent，LLM 自主调用 RAG 工具（图检索、文献检索），支持多轮对话与流式输出
 - ✅ RAG 作为工具：图检索、向量检索、混合检索封装为 Agent 工具，由 Agent 按需调用
 - ✅ 分布式处理：基于 Hadoop 的分布式文本处理
 - ✅ 异步任务管理：基于 Celery 的异步任务队列
@@ -486,16 +486,11 @@ python scripts/check_hadoop_env.py
 
 ## 联系方式
 
-- 项目维护者：[您的姓名/团队名称]
-- 邮箱：[您的邮箱地址]
-- GitHub：[项目 GitHub 地址]
-
-## 致谢
-
-感谢所有为这个项目做出贡献的开发者和研究者！
-
----
+- 项目维护者：[xiangyue247]
+- 邮箱：[2303548451@qq.com]
+- GitHub：前端：[https://github.com/xiangyun247/knowledge_graph_frontend]
+          后端: [https://github.com/xiangyun247/knowledge_graph]
 
 **项目状态**：活跃开发中
-**最后更新**：2026-01-08
+**最后更新**：2026-02-08
 **版本**：v2.0.0
