@@ -23,6 +23,7 @@ from rag.graph_retriever import GraphRetriever
 from llm.client import LLMClient, EmbeddingClient
 import config  # 用 config.DEEPSEEK_xxx 等
 from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from backend.patient_education_images import generate_section_images_glm
 
 # 配置日志
 logging.basicConfig(
@@ -87,6 +88,21 @@ class ImportRequest(BaseModel):
     """导入请求体"""
     entities: List[ImportEntity] = Field(default_factory=list, description="要导入的实体列表")
     relationships: List[ImportRelationship] = Field(default_factory=list, description="要导入的关系列表")
+
+
+# ==================== 患者教育配图模型 ====================
+
+
+class PatientEduSection(BaseModel):
+    """患者教育小节，用于配图生成"""
+    heading: str = Field("", description="小节标题")
+    content: str = Field("", description="小节正文")
+
+
+class GeneratePatientEduImagesRequest(BaseModel):
+    """患者教育配图生成请求"""
+    title: str = Field(..., description="患者教育整体标题")
+    sections: List[PatientEduSection] = Field(..., description="小节列表，通常来自 patient_education.sections")
 
 
 # ==================== 智能实体提取器 ====================
@@ -670,6 +686,24 @@ async def import_data_endpoint(request: ImportRequest):
         "message": "数据导入完成",
         "stats": stats
     }
+
+
+@app.post("/api/patient-education/generate-images")
+async def generate_patient_education_images(req: GeneratePatientEduImagesRequest):
+    """
+    患者教育配图生成接口：
+    - 输入: 患者教育的 title + sections[{heading, content}]
+    - 输出: 每个小节最多一张插图 [{section_index, url, prompt}]
+
+    通常由前端患者教育中心调用，在文字内容生成完成后再请求本接口生成插图。
+    """
+    try:
+        secs = [s.dict() for s in req.sections or []]
+        images = generate_section_images_glm(req.title, secs)
+        return {"images": images}
+    except Exception as e:
+        logger.error("患者教育配图生成失败: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== 主程序 ====================
 

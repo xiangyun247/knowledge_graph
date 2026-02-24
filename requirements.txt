@@ -19,3 +19,8 @@ langgraph>=0.2.0,<0.3
 langchain-core>=0.3.0,<0.4
 langchain-openai>=0.2.0,<0.3  # 兼容 DeepSeek 的 OpenAI 接口
 loguru>=0.7.0  # 日志（backend.app）
+# 多模态：TTS、STT、OCR
+edge-tts>=6.1.0  # 文本转语音
+openai-whisper>=20231117  # 语音转文本
+paddlepaddle>=2.5.0  # OCR（CPU 版；GPU 需单独安装）
+paddleocr>=2.7.0  # 光学字符识别

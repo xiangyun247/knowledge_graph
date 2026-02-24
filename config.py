@@ -100,6 +100,13 @@ DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.7"))
 if not DEEPSEEK_API_KEY:
     print("⚠️  警告: DEEPSEEK_API_KEY 未配置，LLM 功能将不可用")
 
+# ==================== 智谱 GLM-Image 配置 ====================
+
+# 图生模型 API Key（用于 GLM-Image 文生图）
+ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
+if not ZHIPU_API_KEY:
+    print("⚠️  警告: ZHIPU_API_KEY 未配置，患者教育配图功能将不可用")
+
 # ==================== Embedding 配置 ====================
 
 # 是否使用本地 Embedding 模型

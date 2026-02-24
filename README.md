@@ -6,15 +6,24 @@
 
 ### 核心功能
 
-✅ **知识图谱生成**：支持从 PDF、纯文本、JSON 等多种数据源生成医学知识图谱
-✅ **Agent 智能问答**：基于 LangGraph 的 Agent 架构，LLM 自主调用 RAG 工具（图检索、向量检索、混合检索），支持多轮对话与 session 记忆
-✅ **RAG 作为工具**：原 RAG 流水线封装为 Agent 可调用的工具，融合图检索、向量检索与文献检索，由 Agent 决策何时调用、如何组合
-✅ **分布式处理**：基于 Hadoop 的分布式文本处理，支持大规模数据
-✅ **异步任务管理**：基于 Celery 的异步任务队列，支持批量任务处理
-✅ **多数据库支持**：Neo4j 图数据库 + MySQL 关系型数据库，实现数据持久化
-✅ **RESTful API**：完整的 API 服务，支持知识图谱查询、认证（注册/登录）、历史记录（分页与最多 1000 条）、图谱按 graph_id 查询、文档知识库（Chroma）等
-✅ **历史记录**：统一存储问答、图谱查询、图谱构建、上传等记录；支持列表（type/status/limit/offset）、保存、状态更新、搜索；删除（单条/批量/清空）接口计划补充
+✅ **知识图谱生成**：支持从 PDF、纯文本、JSON 等多种数据源生成医学知识图谱  
+✅ **Agent 智能问答**：基于 LangGraph 的 Agent 架构，LLM 自主调用 RAG 工具（图检索、向量检索、混合检索），支持多轮对话与 session 记忆  
+✅ **RAG 作为工具**：原 RAG 流水线封装为 Agent 可调用的工具，融合图检索、向量检索与文献检索，由 Agent 决策何时调用、如何组合  
+✅ **分布式处理**：基于 Hadoop 的分布式文本处理，支持大规模数据  
+✅ **异步任务管理**：基于 Celery 的异步任务队列，支持批量任务处理  
+✅ **多数据库支持**：Neo4j 图数据库 + MySQL 关系型数据库，实现数据持久化  
+✅ **RESTful API**：完整的 API 服务，支持知识图谱查询、认证（注册/登录）、历史记录（分页与最多 1000 条）、图谱按 graph_id 查询、文档知识库（Chroma）等  
+✅ **历史记录**：统一存储问答、图谱查询、图谱构建、上传等记录；支持列表（type/status/limit/offset）、保存、状态更新、搜索；删除（单条/批量/清空）接口已补全  
 ✅ **Docker 容器化**：全系统容器化，支持快速部署和环境一致性
+
+### 最近更新（智能体 & 多模态）
+
+- **患者教育生成**：新增 `intent=patient_education` 智能体能力，后端提供结构化患者教育内容（标题 + 分节 + 温馨提示），前端专门页面与排版展示，支持一键生成「给患者看的说明书」。
+- **科普推文生成**：新增 `intent=science_tweet`，可将普通问答结果概括为 1～3 条科普推文，并返回推荐话题标签，前端聊天中支持「推文版」按钮。
+- **多模态工具**：后端新增语音转写（STT）、图片 OCR + 影像解读等多模态接口，作为 Agent 工具与上传/聊天入口使用。
+- **语音输入（Whisper + FFmpeg）**：前端 Chat 页面支持语音输入，后端使用本地 OpenAI Whisper 模型进行中文转写，并通过 `.env` 中的 `FFMPEG_BIN_DIR` 自动配置 ffmpeg 可执行路径。
+- **图文结合问答**：智能体问答结果与图谱/文献来源统一管理，返回 `sources` 与可视化数据，前端右侧以「来自图谱 / 来自文献」等形式展示，实现回答 + 可视图谱/文献的图文效果。
+- **多 LLM 模型适配**：新增统一的 `llm/models_config.py`，支持 DeepSeek、OpenAI GPT、Gemini、通义千问、豆包、智谱 GLM、文心一言、Kimi、Grok 等主流模型；前端聊天界面可切换模型，未配置的模型会提示「未配置该模型」。
 
 ## 文档与测试
 
@@ -190,6 +199,11 @@ python run.py
 
 # 4. 启动 Celery 服务（批量任务需用时）
 celery -A backend.celery_app worker --loglevel=info
+
+# 5. （可选，多模态语音输入）安装并测试 ffmpeg
+# Windows 上推荐从 gyan.dev 下载 ffmpeg-*-essentials_build，解压后在 .env 中配置 FFMPEG_BIN_DIR 为 bin 目录：
+#   FFMPEG_BIN_DIR=F:\ffmpeg\ffmpeg-2026-02-23-git-xxxx-essentials_build\bin
+# 然后重新启动后端服务。
 ```
 
 前端联调时，将前端 `.env.development` 中 `VUE_APP_API_BASE_URL` 指向 `http://localhost:5001`，并先运行 `python scripts/check_frontend_backend_api.py` 做接口检查。
@@ -245,18 +259,26 @@ Agent 内部会按需调用 RAG 工具（图检索、文献检索等）并综合
 
 ### 3. RAG 流水线（作为 Agent 工具底层）
 
-若需单独使用 RAG 能力（不经过 Agent），可仍使用原有 RAG 模块；当前默认问答路径为 Agent 调用 RAG 工具：
+若需单独使用 RAG 能力（不经过 Agent），可仍使用原有 RAG 模块；当前默认问答路径为 Agent 调用 RAG 工具。
 
-```python
-from rag.rag_pipeline import RAGPipeline
-from db.neo4j_client import Neo4jClient
-from llm.client import LLMClient, EmbeddingClient
+### 4. 语音输入（STT）与前端使用
 
-# 初始化 RAG 流水线（Agent 内工具会复用类似能力）
-rag_pipeline = RAGPipeline(neo4j_client, llm_client, embedding_client)
-result = rag_pipeline.query("胰腺炎的治疗方法有哪些？")
-print(result["answer"])
-```
+后端通过 `backend.stt_service.transcribe` + `backend.multimodal_router.api_stt_transcribe` 提供语音转文本能力，前端 Chat 页面使用麦克风按钮调用：
+
+- **依赖准备**
+  - Python 依赖：`openai-whisper` 已在 `requirements.txt` 中声明；
+  - 系统依赖：本机需安装 `ffmpeg`，并在 `.env` 中配置：
+    ```env
+    FFMPEG_BIN_DIR=路径到\ffmpeg\bin
+    ```
+  - `backend/stt_service.py` 会在每次调用时读取 `FFMPEG_BIN_DIR` 并把该目录加入当前进程的 `PATH`，避免环境变量未生效导致 `WinError 2`。
+
+- **调用流程**
+  - 前端使用 `MediaRecorder` 录音，录制结束后通过 `/api/stt/transcribe` 上传音频（默认使用 webm）；
+  - 后端将音频写入临时文件，使用本地 Whisper 模型（默认 `base`，CPU 下 `fp16=False`）进行中文转写；
+  - 返回识别出的文本，前端将其自动填入问答输入框，可继续发送给 Agent。
+
+> 注意：前端问答与患者教育功能已增加登录校验——页面可以匿名访问，但发送消息、语音输入、图片解读、生成/保存患者教育等操作会检测登录状态，未登录时会提示并跳转到 `/login`。
 
 ## API 文档
 
@@ -466,8 +488,14 @@ python scripts/check_hadoop_env.py
 
 - [ ] 优化实体-关系提取算法，提高准确率
 - [ ] 增强 Agent 工具（如多模态、更多检索源）
+<<<<<<< HEAD
 - [ ] 与 Vue 前端联调（历史记录、图谱构建、知识库、模板下载等已对接）
 - [ ] 支持更多 LLM 模型，提高灵活性
+=======
+- [x] 与 Vue 前端联调（历史记录、图谱构建、知识库、模板下载等已对接）
+- [x] 补充历史记录删除接口（单条/批量/清空）与图谱清空接口（`DELETE /api/graph/clear`），与前端对齐
+- [x] 支持更多 LLM 模型，提高灵活性（问答界面可切换 DeepSeek、GPT、Gemini、通义、豆包、智谱、文心一言、Kimi、Grok 等，需在 .env 配置 API Key）
+>>>>>>> 5479acd (feat: add KB QA, multimodal and dashboard stats)
 - [ ] 优化分布式处理性能，支持更大规模数据
 
 ## 贡献指南

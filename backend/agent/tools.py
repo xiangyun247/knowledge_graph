@@ -376,6 +376,75 @@ def get_graph_snapshot(graph_id: str, limit: int = 50) -> str:
         return f"[图谱快照异常: {e}]"
 
 
+@tool
+def generate_science_tweet(
+    topic: str,
+    word_limit: int = 140,
+    style: str = "轻松",
+    source_content: str = "",
+) -> str:
+    """
+    生成科普推文。当用户要求「科普推文」「写一条微博」「发朋友圈文案」「推文版」等时使用。
+    参数：topic 为主题；word_limit 每条字数限制，默认 140（微博风格），可选 280；style 风格如「轻松」「严谨」「亲切」；source_content 可选，已有回答内容，作为参考提炼推文。
+    输出：1～3 条推文文案 + 话题标签建议。
+    """
+    from .science_tweet import generate_science_tweet as _gen
+    result = _gen(
+        topic=topic.strip(),
+        word_limit=word_limit,
+        style=(style or "轻松").strip(),
+        source_content=(source_content or "").strip() or None,
+    )
+    if result.get("error"):
+        return f"[科普推文生成失败] {result.get('error')}"
+    lines = []
+    for i, t in enumerate(result.get("tweets") or [], 1):
+        lines.append(f"推文 {i}：{t}")
+    tags = result.get("hashtags") or []
+    if tags:
+        lines.append(f"\n话题标签建议：{' '.join(tags)}")
+    return "\n".join(lines) if lines else "[未生成有效推文]"
+
+
+@tool
+def generate_health_tip(topic: str) -> str:
+    """
+    生成单条健康小贴士。当用户要求「健康小贴士」「一条小提示」「健康提醒」等时使用。
+    参数：topic 为主题。
+    """
+    from .science_tweet import generate_health_tip as _gen
+    result = _gen(topic=topic.strip())
+    if result.get("error"):
+        return f"[健康小贴士生成失败] {result.get('error')}"
+    return result.get("tip") or "[未生成有效内容]"
+
+
+@tool
+def generate_patient_education(
+    topic: str,
+    context_snippets: str = "",
+) -> str:
+    """
+    生成患者教育短文。当用户要求「患者教育」「写一篇给患者看的说明」「通俗解释给患者」等时使用。
+    参数：topic 为主题，如「急性胰腺炎出院后注意事项」；context_snippets 可选，为额外上下文片段（多段用双换行分隔），空则自动从图谱和文献检索。
+    输出：结构化的患者教育内容，含标题、分节、温馨提示。
+    """
+    from .patient_education import generate_patient_education as _gen
+    snippets = [s.strip() for s in (context_snippets or "").split("\n\n") if s.strip()]
+    result = _gen(topic=topic, context_snippets=snippets if snippets else None)
+    if result.get("error"):
+        return f"[患者教育生成失败] {result.get('error')}"
+    lines = [f"# {result.get('title', topic)}", ""]
+    for sec in result.get("sections") or []:
+        lines.append(f"## {sec.get('heading', '')}")
+        lines.append(sec.get("content", ""))
+        lines.append("")
+    summary = result.get("summary", "")
+    if summary:
+        lines.append(f"**温馨提示**：{summary}")
+    return "\n".join(lines)
+
+
 def get_all_tools():
     return [
         graph_retrieve,
@@ -386,4 +455,7 @@ def get_all_tools():
         get_kg_build_status,
         list_my_graphs,
         get_graph_snapshot,
+        generate_science_tweet,
+        generate_health_tip,
+        generate_patient_education,
     ]

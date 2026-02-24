@@ -26,4 +26,12 @@
 | **DELETE** | **`/api/graph/clear`** | **清空所有图谱（Neo4j + MySQL）** |
 | **DELETE** | **`/api/graph/{graph_id}`** | **按 graph_id 删除单个图谱（仅 MySQL 元数据；需当前用户有权）** |
 
+## 多 LLM 模型
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/llm/models` | 获取可用模型列表（仅返回已在 .env 配置 API Key 的模型） |
+
+问答接口 `POST /api/agent/query` 与 `POST /api/agent/query/stream` 支持请求体字段 `model`，值为模型 id（如 `deepseek-chat`、`qwen-plus`）。需在 `.env` 中配置对应 API Key，参见 `.env.example`。
+
 其他接口（Agent 问答、上传、KG 构建、知识库、Hadoop 等）见后端 `/docs`。

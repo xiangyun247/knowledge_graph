@@ -25,11 +25,68 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["Agent"])
 
 
+@router.get("/llm/models")
+async def api_llm_models():
+    """
+    返回全部 LLM 模型列表（含未配置），每项带 configured: bool。
+    未配置的模型也会出现在选项中；前端在选用未配置模型时提示「未配置该模型」。
+    """
+    try:
+        from llm.models_config import get_all_models, get_default_model_id
+        models = get_all_models()
+        default = get_default_model_id()
+        return {"data": models, "default": default}
+    except Exception as e:
+        logger.warning("获取 LLM 模型列表失败: %s", e)
+        return {"data": [], "default": "deepseek-chat"}
+
+
 class AgentQueryRequest(BaseModel):
     """Agent 问答请求，与 Chat 前端兼容"""
     question: str = Field(..., min_length=1, max_length=500, description="用户问题")
     session_id: Optional[str] = Field(None, description="会话 id，6.1 用于多轮对话记忆")
+    model: Optional[str] = Field(None, description="多 LLM 支持：模型 id，如 deepseek-chat、qwen-plus，需在 .env 配置 API Key")
     deep_think: bool = Field(False, description="是否返回「深度思考」分析 trace")
+    intent: Optional[str] = Field(None, description="意图：patient_education/science_tweet 时直接生成对应内容")
+
+
+class ScienceTweetRequest(BaseModel):
+    """科普推文生成请求（用于「推文版」按钮）"""
+    topic: str = Field(..., min_length=1, max_length=300, description="主题")
+    source_content: Optional[str] = Field(None, description="已有回答内容，作为参考提炼推文")
+    word_limit: int = Field(140, ge=80, le=500, description="每条字数限制")
+    style: str = Field("轻松", description="风格：轻松/严谨/亲切")
+
+
+@router.post("/science-tweet")
+async def api_science_tweet(request: Request, req: ScienceTweetRequest):
+    """
+    生成科普推文。用于「推文版」按钮：将已有问答转化为 1～3 条推文。
+    传入 topic（原问题）和可选的 source_content（已有回答），基于 RAG 或已有内容生成推文。
+    """
+    user_id = get_current_user_id(request)
+    try:
+        from backend.agent.science_tweet import generate_science_tweet
+        from backend.agent.context import set_agent_user_id
+        set_agent_user_id(user_id)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: generate_science_tweet(
+                topic=req.topic.strip(),
+                word_limit=req.word_limit,
+                style=req.style.strip() or "轻松",
+                source_content=req.source_content.strip() if req.source_content else None,
+            ),
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=result.get("error"))
+        return {"data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("科普推文生成失败")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _history_to_messages(history: list):
@@ -66,10 +123,100 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
         )
 
     user_id = get_current_user_id(request)
+
+    # intent=science_tweet：直接生成科普推文
+    if (req.intent or "").strip().lower() == "science_tweet":
+        try:
+            from backend.agent.science_tweet import generate_science_tweet
+            from backend.agent.context import set_agent_user_id
+            from backend.agent_session import append_session_exchange
+            set_agent_user_id(user_id)
+            start = time.time()
+            loop = asyncio.get_event_loop()
+            st_result = await loop.run_in_executor(
+                None,
+                lambda: generate_science_tweet(topic=req.question.strip(), word_limit=140, style="轻松"),
+            )
+            elapsed = time.time() - start
+            if st_result.get("error"):
+                answer = f"[科普推文生成失败] {st_result.get('error')}"
+                st_result = None
+            else:
+                lines = []
+                for i, t in enumerate(st_result.get("tweets") or [], 1):
+                    lines.append(f"推文 {i}：{t}")
+                tags = st_result.get("hashtags") or []
+                if tags:
+                    lines.append(f"\n话题标签建议：{' '.join(tags)}")
+                answer = "\n".join(lines)
+            if req.session_id and req.session_id.strip():
+                append_session_exchange(req.session_id, req.question, answer)
+            return {
+                "question": req.question,
+                "answer": answer,
+                "response": answer,
+                "sources": [],
+                "trace": None,
+                "processing_time": round(elapsed, 3),
+                "science_tweet": st_result,
+            }
+        except Exception as e:
+            logger.exception("科普推文生成失败")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # intent=patient_education：直接调用患者教育生成，返回结构化内容
+    if (req.intent or "").strip().lower() == "patient_education":
+        try:
+            from backend.agent.patient_education import generate_patient_education
+            from backend.agent.context import set_agent_user_id
+            from backend.agent_session import append_session_exchange
+            set_agent_user_id(user_id)
+            start = time.time()
+            loop = asyncio.get_event_loop()
+            pe_result = await loop.run_in_executor(
+                None,
+                lambda: generate_patient_education(topic=req.question.strip()),
+            )
+            elapsed = time.time() - start
+            if pe_result.get("error"):
+                answer = f"[患者教育生成失败] {pe_result.get('error')}"
+                pe_result = None
+            else:
+                lines = [f"# {pe_result.get('title', req.question)}", ""]
+                for sec in pe_result.get("sections") or []:
+                    lines.append(f"## {sec.get('heading', '')}")
+                    lines.append(sec.get("content", ""))
+                    lines.append("")
+                if pe_result.get("summary"):
+                    lines.append(f"**温馨提示**：{pe_result.get('summary')}")
+                answer = "\n".join(lines)
+            if req.session_id and req.session_id.strip():
+                append_session_exchange(req.session_id, req.question, answer)
+            return {
+                "question": req.question,
+                "answer": answer,
+                "response": answer,
+                "sources": [],
+                "trace": None,
+                "processing_time": round(elapsed, 3),
+                "patient_education": pe_result,
+            }
+        except Exception as e:
+            logger.exception("患者教育生成失败")
+            raise HTTPException(status_code=500, detail=str(e))
+
     initial_messages = None
     if req.session_id and req.session_id.strip():
         hist = get_session_history(req.session_id)
         initial_messages = _history_to_messages(hist)
+
+    if req.model:
+        try:
+            from llm.models_config import get_llm_config
+            if get_llm_config(req.model) is None:
+                raise HTTPException(status_code=400, detail="未配置该模型")
+        except HTTPException:
+            raise
 
     start = time.time()
     try:
@@ -80,6 +227,7 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
                 req.question,
                 initial_messages=initial_messages,
                 user_id=user_id,
+                model_id=req.model,
                 deep_think=req.deep_think,
             ),
         )
@@ -108,6 +256,7 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
     """
     6.2 流式问答：SSE 推送 chunk（打字机）与 done（answer+sources）。
     7.1 传入 user_id 供 tools 做文档/图谱权限过滤。
+    intent=patient_education 时直接生成患者教育，一次性返回 done。
     """
     try:
         from backend.agent import run_agent_stream
@@ -121,10 +270,94 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
         )
 
     user_id = get_current_user_id(request)
+
+    # intent=science_tweet：直接生成科普推文
+    if (req.intent or "").strip().lower() == "science_tweet":
+        try:
+            from backend.agent.science_tweet import generate_science_tweet
+            from backend.agent.context import set_agent_user_id
+            set_agent_user_id(user_id)
+            loop = asyncio.get_event_loop()
+            st_result = await loop.run_in_executor(
+                None,
+                lambda: generate_science_tweet(topic=req.question.strip(), word_limit=140, style="轻松"),
+            )
+            if st_result.get("error"):
+                answer = f"[科普推文生成失败] {st_result.get('error')}"
+                st_result = None
+            else:
+                lines = []
+                for i, t in enumerate(st_result.get("tweets") or [], 1):
+                    lines.append(f"推文 {i}：{t}")
+                tags = st_result.get("hashtags") or []
+                if tags:
+                    lines.append(f"\n话题标签建议：{' '.join(tags)}")
+                answer = "\n".join(lines)
+            if req.session_id and req.session_id.strip():
+                append_session_exchange(req.session_id, req.question, answer)
+
+            def event_gen():
+                yield f"data: {json.dumps({'type': 'done', 'answer': answer, 'sources': [], 'science_tweet': st_result}, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(
+                event_gen(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            )
+        except Exception as e:
+            logger.exception("科普推文生成失败")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # intent=patient_education：直接生成，一次性返回
+    if (req.intent or "").strip().lower() == "patient_education":
+        try:
+            from backend.agent.patient_education import generate_patient_education
+            from backend.agent.context import set_agent_user_id
+            set_agent_user_id(user_id)
+            loop = asyncio.get_event_loop()
+            pe_result = await loop.run_in_executor(
+                None,
+                lambda: generate_patient_education(topic=req.question.strip()),
+            )
+            if pe_result.get("error"):
+                answer = f"[患者教育生成失败] {pe_result.get('error')}"
+                pe_result = None
+            else:
+                lines = [f"# {pe_result.get('title', req.question)}", ""]
+                for sec in pe_result.get("sections") or []:
+                    lines.append(f"## {sec.get('heading', '')}")
+                    lines.append(sec.get("content", ""))
+                    lines.append("")
+                if pe_result.get("summary"):
+                    lines.append(f"**温馨提示**：{pe_result.get('summary')}")
+                answer = "\n".join(lines)
+            if req.session_id and req.session_id.strip():
+                append_session_exchange(req.session_id, req.question, answer)
+
+            def event_gen():
+                yield f"data: {json.dumps({'type': 'done', 'answer': answer, 'sources': [], 'patient_education': pe_result}, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(
+                event_gen(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            )
+        except Exception as e:
+            logger.exception("患者教育生成失败")
+            raise HTTPException(status_code=500, detail=str(e))
+
     initial_messages = None
     if req.session_id and req.session_id.strip():
         hist = get_session_history(req.session_id)
         initial_messages = _history_to_messages(hist)
+
+    if req.model:
+        try:
+            from llm.models_config import get_llm_config
+            if get_llm_config(req.model) is None:
+                raise HTTPException(status_code=400, detail="未配置该模型")
+        except HTTPException:
+            raise
 
     def event_gen():
         try:
@@ -132,6 +365,7 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
                 req.question,
                 initial_messages=initial_messages,
                 user_id=user_id,
+                model_id=req.model,
                 deep_think=req.deep_think,
             ):
                 if ev.get("type") == "done" and req.session_id and req.session_id.strip():

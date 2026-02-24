@@ -2,6 +2,7 @@ import os
 import uuid
 from datetime import datetime
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from dotenv import load_dotenv
 import logging
 
@@ -73,6 +74,22 @@ class MySQLClient:
                 result = conn.execute(text(query), params or {})
                 return result.rowcount
         except Exception as e:
+            # 特殊处理：索引已存在（1061 Duplicate key name），静音处理为 info
+            if isinstance(e, OperationalError):
+                code = None
+                try:
+                    if getattr(e, "orig", None) is not None:
+                        args = getattr(e.orig, "args", None)
+                        if args and len(args) > 0:
+                            code = args[0]
+                except Exception:
+                    code = None
+                msg = str(e)
+                sql_upper = (query or "").strip().upper()
+                if code == 1061 and sql_upper.startswith("CREATE INDEX") and "IDX_KB_USER_ID" in sql_upper:
+                    logger.info("索引 idx_kb_user_id 已存在，忽略重复创建。")
+                    return 0
+
             logger.error(f"执行更新失败: {e}")
             raise e
     
@@ -123,7 +140,7 @@ class MySQLClient:
         return graph_id
     
     def get_graphs(self, status=None, user_id=None, limit=100, offset=0):
-        """获取知识图谱列表"""
+        """获取知识图谱列表。user_id 为 None 时不按用户过滤（返回全部）。"""
         query = "SELECT * FROM knowledge_graphs WHERE 1=1"
         params = {}
         
@@ -140,7 +157,45 @@ class MySQLClient:
         params["offset"] = offset
         
         return self.execute_query(query, params)
-    
+
+    def get_default_graphs(self, limit=100):
+        """获取默认图谱（user_id 为 NULL 的记录，如 init_mysql 插入的示例图谱），登录与否均可见。"""
+        query = "SELECT * FROM knowledge_graphs WHERE user_id IS NULL ORDER BY created_at DESC LIMIT :limit"
+        params = {"limit": limit}
+        return self.execute_query(query, params)
+
+    # 与 init_mysql.sql 中一致的默认图谱 ID，用于「无数据时自动插入一条默认图谱」
+    DEFAULT_GRAPH_ID = "e7d1a8a0-1b9c-4d8e-8f9a-0b1c2d3e4f5a"
+
+    def ensure_default_graph(self):
+        """若表中没有任何图谱，则插入一条默认图谱（user_id 为 NULL），保证列表不为空。幂等：已存在则跳过。"""
+        try:
+            existing = self.execute_query(
+                "SELECT 1 FROM knowledge_graphs WHERE graph_id = :gid LIMIT 1",
+                {"gid": self.DEFAULT_GRAPH_ID},
+            )
+            if existing:
+                return
+            self.execute_update(
+                """
+                INSERT INTO knowledge_graphs
+                (graph_id, graph_name, description, data_source, status, entity_count, relation_count, user_id)
+                VALUES
+                (:graph_id, :graph_name, :description, :data_source, :status, :entity_count, :relation_count, NULL)
+                """,
+                {
+                    "graph_id": self.DEFAULT_GRAPH_ID,
+                    "graph_name": "医学知识图谱示例",
+                    "description": "包含疾病、症状、药物的医学知识图谱",
+                    "data_source": "sample_medical_data.json",
+                    "status": "completed",
+                    "entity_count": 1000,
+                    "relation_count": 2000,
+                },
+            )
+        except Exception as e:
+            logger.warning("ensure_default_graph 插入失败（可能表结构不同）: %s", e)
+
     def get_graph_by_id(self, graph_id):
         """根据ID获取知识图谱详情"""
         query = "SELECT * FROM knowledge_graphs WHERE graph_id = :graph_id"
@@ -156,7 +211,21 @@ class MySQLClient:
         params = {"data_source": data_source}
         result = self.execute_query(query, params)
         return result[0] if result else None
-    
+
+    def get_latest_graph_by_user_and_name(self, user_id, graph_name):
+        """按 user_id + graph_name 取最近一条图谱（构建完成后保存历史时，前端传的 graphId 可能不存在，用此方法解析真实 graph_id）。"""
+        if not graph_name:
+            return None
+        query = """
+        SELECT * FROM knowledge_graphs
+        WHERE graph_name = :graph_name AND (user_id = :user_id OR user_id IS NULL)
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+        params = {"graph_name": graph_name, "user_id": user_id or "default_user"}
+        result = self.execute_query(query, params)
+        return result[0] if result else None
+
     def update_graph_status(self, graph_id, status, entity_count=None, relation_count=None):
         """更新知识图谱状态"""
         query = "UPDATE knowledge_graphs SET status = :status"
@@ -536,7 +605,16 @@ class MySQLClient:
                 operation_type = 'create'
             else:
                 operation_type = 'query'  # 默认值
-            
+
+            # 图谱构建场景：前端 graphId 与后端 create_graph 返回的不一致会导致外键失败，此处解析为真实 graph_id
+            if graph_id and operation_type == 'create' and not self.get_graph_by_id(graph_id):
+                graph_name = content.get('graphName') or content.get('graphId') or ''
+                latest = self.get_latest_graph_by_user_and_name(user_id, graph_name)
+                if latest:
+                    graph_id = latest.get('graph_id') or latest.get('id')
+                else:
+                    graph_id = self.DEFAULT_GRAPH_ID
+
             # 根据记录类型提取query_text和answer_text
             if record_type == 'chat':
                 query_text = content.get('question', '') or data.get('title', '') or '未知查询'

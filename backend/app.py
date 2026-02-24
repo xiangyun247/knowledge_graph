@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from db.mysql_client import get_mysql_client
 from backend.auth import get_current_user_id
 import hashlib
+from backend.patient_education_images import generate_section_images_glm
 
 # 尝试导入 Neo4j 客户端（可选，用于实体搜索）
 neo4j_client = None
@@ -150,6 +151,30 @@ def _ensure_knowledge_bases_table() -> None:
         _logger.warning(f"ensure knowledge_bases table failed: {e}")
 
 
+def _ensure_patient_education_table() -> None:
+    """确保存在 patient_education 表，用于保存「我的患者教育」记录。"""
+    if not mysql_client:
+        return
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS patient_education (
+        id VARCHAR(64) PRIMARY KEY COMMENT '患者教育记录ID',
+        user_id VARCHAR(64) NOT NULL COMMENT '用户ID',
+        topic TEXT COMMENT '生成时的主题',
+        title VARCHAR(255) NOT NULL COMMENT '患者教育标题',
+        content_json JSON NOT NULL COMMENT '完整患者教育结构(JSON: title, sections, summary)',
+        images_json JSON NULL COMMENT '配图信息(JSON 数组: [{section_index,url,prompt}])',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+        INDEX idx_pe_user_created (user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='患者教育记录';
+    """
+    try:
+        mysql_client.execute_update(create_sql)
+    except Exception as e:
+        from loguru import logger as _logger
+        _logger.warning(f"ensure patient_education table failed: {e}")
+
+
 def _hash_password(password: str) -> str:
     """使用 SHA256 做简单加密（示例项目，非生产级别）。"""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
@@ -228,6 +253,145 @@ try:
 except Exception as e:
     logger.warning(f"Agent 问答 API 路由注册失败: {e}, Chat Agent 问答将不可用")
 
+# 注册多模态 API（TTS、STT、OCR）
+try:
+    from backend.multimodal_router import router as multimodal_router
+    app.include_router(multimodal_router)
+    logger.info("多模态 API 路由注册成功 (TTS/STT/OCR)")
+except Exception as e:
+    logger.warning(f"多模态 API 路由注册失败: {e}, TTS/STT/OCR 将不可用")
+
+# =============== 首页仪表盘统计与数据模板下载 ===============
+
+
+@app.get("/api/home/overview", tags=["首页"])
+async def home_overview(request: Request):
+    """
+    首页仪表盘统计：
+    - 我的知识图谱数：当前用户在 knowledge_graphs 表中的记录数（或默认图谱+用户图谱）
+    - 我的知识库文档数：当前用户在 Chroma 中的 doc 数（按 doc_id 聚合）
+    - 本周已回答问题数：最近 7 天内的 chat 类型历史记录数（基于 history_records）
+    - 最近活动：最近 3 条历史记录，涵盖图谱构建 / 文档上传 / 聊天 / 搜索
+    """
+    user_id = get_current_user_id(request)
+
+    # 1. 我的知识图谱数 & 总实体数 / 关系数
+    graph_count = 0
+    total_entities = 0
+    total_relations = 0
+    if mysql_client:
+        try:
+            graphs = mysql_client.get_graphs(user_id=user_id, limit=1000)
+            # 若没有用户图谱，可回退到默认图谱（user_id IS NULL）
+            if not graphs:
+                graphs = mysql_client.get_default_graphs(limit=100)
+            for g in graphs or []:
+                graph_count += 1
+                try:
+                    total_entities += int(g.get("entity_count") or 0)
+                except Exception:
+                    pass
+                try:
+                    total_relations += int(g.get("relation_count") or 0)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"home_overview: 获取图谱数量失败: {e}")
+
+    # 2. 我的知识库文档数（按 doc_id 聚合）
+    doc_count = 0
+    try:
+        where = _build_kb_where(user_id, source_type=None, kb_id=None)
+        store = _get_chroma_store()
+        chunks = store.get_chunks(where=where, limit=50000)
+        doc_ids = set()
+        for c in chunks:
+            meta = c.get("metadata") or {}
+            did = meta.get("doc_id") or (c.get("id", "").split(":")[0] if c.get("id") else "")
+            if did:
+                doc_ids.add(did)
+        doc_count = len(doc_ids)
+    except Exception as e:
+        logger.warning(f"home_overview: 统计知识库文档失败: {e}")
+
+    # 3. 本周已回答问题（最近 7 天 chat 记录）
+    answered_this_week = 0
+    search_count = 0
+    recent_activities: List[Dict[str, Any]] = []
+    try:
+        if mysql_client:
+            from datetime import datetime, timedelta
+
+            now = datetime.utcnow()
+            since = now - timedelta(days=7)
+            # 直接复用 get_histories，然后在应用层过滤
+            histories = mysql_client.get_histories(user_id=user_id, limit=200, offset=0)
+            for h in histories:
+                # 解析时间
+                created = h.get("createTime") or ""
+                created_dt = None
+                if isinstance(created, str) and created:
+                    try:
+                        # MySQL 通常是 "YYYY-MM-DD HH:MM:SS"
+                        created_dt = datetime.fromisoformat(created.replace(" ", "T"))
+                    except Exception:
+                        created_dt = None
+                h_type = h.get("type")
+                if h_type == "chat" and created_dt and created_dt >= since:
+                    answered_this_week += 1
+                if h_type == "search":
+                    search_count += 1
+
+            # 最近活动：按照 createTime 排序取前 3 条
+            def _key(item: Dict[str, Any]):
+                ct = item.get("createTime") or ""
+                return ct
+
+            histories_sorted = sorted(histories, key=_key, reverse=True)
+            for h in histories_sorted[:3]:
+                recent_activities.append(
+                    {
+                        "id": h.get("id"),
+                        "type": h.get("type"),
+                        "title": h.get("title"),
+                        "time": h.get("createTime"),
+                    }
+                )
+        else:
+            # 无 MySQL 时，可根据内存中的 history_records 简单填充（若有的话）
+            for hid, info in list(history_records.items())[-3:][::-1]:
+                recent_activities.append(
+                    {
+                        "id": hid,
+                        "type": info.get("type", "unknown"),
+                        "title": info.get("message") or "历史记录",
+                        "time": info.get("created_at", ""),
+                    }
+                )
+    except Exception as e:
+        logger.warning(f"home_overview: 统计问答与最近活动失败: {e}")
+
+    # 4. 检索失败/成功率与数据准确率（目前按简单估算，可后续结合日志/错误记录细化）
+    search_fail = 0
+    search_rate = 100.0 if search_count > 0 else 100.0
+    accuracy = search_rate
+
+    return {
+        "status": "success",
+        "data": {
+            "graphCount": graph_count,
+            "docCount": doc_count,
+            "answeredThisWeek": answered_this_week,
+            "totalEntities": total_entities,
+            "totalRelations": total_relations,
+            "searchCount": search_count,
+            "searchFail": search_fail,
+            "searchRate": search_rate,
+            "accuracy": accuracy,
+            "recentActivities": recent_activities,
+        },
+    }
+
 
 # =============== 数据模板下载（内联注册，确保与 /api/kb 同进程生效） ===============
 
@@ -277,6 +441,13 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(..., description="用户名", min_length=3, max_length=64)
     password: str = Field(..., description="密码", min_length=8, max_length=128)
+
+
+class PatientEducationSaveRequest(BaseModel):
+    """保存患者教育请求体"""
+    topic: str = Field(..., description="生成时的主题")
+    patient_education: Dict[str, Any] = Field(..., description="完整患者教育结构 {title, sections, summary}")
+    images: Optional[List[Dict[str, Any]]] = Field(default=None, description="可选配图信息 [{section_index, url, prompt}]")
 
 
 @app.post("/api/auth/register", tags=["认证"])
@@ -818,6 +989,104 @@ async def search_documents(
         logger.exception("文档检索失败")
         raise HTTPException(status_code=500, detail=f"文档检索失败: {str(e)}")
 
+
+class KbAskBody(BaseModel):
+    """基于知识库的问答请求体：仅使用文档片段作为上下文，不访问图谱。"""
+    question: str = Field(..., min_length=1, max_length=500, description="用户问题")
+    k: int = Field(5, ge=1, le=20, description="用于构建上下文的文献片段数量")
+    kb_id: Optional[str] = Field(None, description="知识库 id，不传或 default 表示默认知识库")
+    source_type: Optional[str] = Field(None, description="按 source_type 过滤，如 pdf/txt/json")
+    model: Optional[str] = Field(None, description="LLM 模型 id，与 /api/llm/models 一致，如 deepseek-chat")
+
+
+@app.post("/api/kb/ask", tags=["文档知识库"])
+async def kb_ask(request: Request, body: KbAskBody):
+    """
+    基于知识库文档进行问答：
+    - 仅使用当前用户在指定知识库中的文档片段作为上下文；
+    - 使用与聊天页面一致的 LLM 模型（通过 model 参数或默认模型）生成回答；
+    - 不访问图谱与其他外部数据源。
+    """
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    # 解析模型配置（与 /api/agent/query 一致）
+    model_id = (body.model or "").strip()
+    api_key = base_url = model_name = None
+    if model_id:
+        from llm.models_config import get_llm_config
+        cfg = get_llm_config(model_id)
+        if cfg is None:
+            raise HTTPException(status_code=400, detail="未配置该模型")
+        api_key, base_url, model_name = cfg
+
+    # 若未指定 model，退回默认 DeepSeek 配置（由 DeepSeekClient 内部读取 .env）
+    try:
+        from llm.client import DeepSeekClient
+        if api_key:
+            llm = DeepSeekClient(api_key=api_key, base_url=base_url, model=model_name)
+        else:
+            llm = DeepSeekClient()
+    except Exception as e:
+        logger.exception("初始化 LLM 客户端失败")
+        raise HTTPException(status_code=503, detail=f"大模型不可用，请检查配置。错误: {e}")
+
+    try:
+        current_user_id = get_current_user_id(request)
+        where = _build_kb_where(current_user_id, body.source_type, body.kb_id)
+        store = _get_chroma_store()
+        hits = store.search(query_text=q, k=body.k, where=where)
+    except Exception as e:
+        logger.exception("基于知识库问答：检索文档失败")
+        raise HTTPException(status_code=500, detail=f"文档检索失败: {str(e)}")
+
+    if not hits:
+        return {
+            "status": "success",
+            "data": {
+                "question": q,
+                "answer": "当前知识库中没有找到与该问题足够相关的文献片段，暂时无法给出基于文献的回答。",
+                "sources": [],
+            },
+        }
+
+    # 构建上下文：按相关度从高到低拼接
+    context_blocks = []
+    for idx, h in enumerate(hits, start=1):
+        meta = h.get("metadata") or {}
+        src = meta.get("source_file") or meta.get("doc_id") or "未知文档"
+        txt = (h.get("text") or "").strip()
+        if not txt:
+            continue
+        context_blocks.append(f"[片段 {idx} · {src}]\n{txt}")
+
+    context_text = "\n\n".join(context_blocks)
+    system_prompt = (
+        "你是一名负责解释医学文献的中文医疗助手。下面提供的是用户个人知识库中的文献片段，"
+        "请仅基于这些片段中的信息，用通俗易懂的中文回答用户的问题；"
+        "若文献不足以支持明确回答，请说明不确定之处，并提示用户以正式指南和医生意见为准。"
+    )
+    user_prompt = (
+        f"【用户问题】\n{q}\n\n"
+        f"【可用文献片段】\n{context_text}\n\n"
+        "请基于上述文献片段，给出一段结构清晰的回答，可以分点说明。"
+    )
+
+    try:
+        answer = llm.generate(prompt=user_prompt, system_prompt=system_prompt, temperature=0.2, max_tokens=1200)
+    except Exception as e:
+        logger.exception("基于知识库问答：LLM 生成失败")
+        raise HTTPException(status_code=500, detail=f"生成回答失败: {str(e)}")
+
+    return {
+        "status": "success",
+        "data": {
+            "question": q,
+            "answer": answer.strip() if answer else "",
+            "sources": hits,
+        },
+    }
 
 @app.get("/api/kb/documents/list", tags=["文档知识库"])
 async def list_documents(
@@ -1384,10 +1653,13 @@ async def update_history_status(history_id: str, body: Optional[dict] = Body(Non
 async def clear_history_all(request: Request):
     """清空历史记录；可按当前用户清空或清空全部（由前端传参或后端策略决定，此处清空全部）"""
     try:
-        if not mysql_client or not hasattr(mysql_client, "clear_history"):
-            raise HTTPException(status_code=501, detail="清空历史功能未就绪")
-        # 可选：仅清空当前用户 current_user_id = get_current_user_id(request); mysql_client.clear_history(user_id=current_user_id)
-        n = mysql_client.clear_history(user_id=None)
+        if mysql_client and hasattr(mysql_client, "clear_history"):
+            n = mysql_client.clear_history(user_id=None)
+            return {"status": "success", "message": f"已清空 {n} 条历史", "deleted": n}
+        # 无 MySQL 时退回到内存 history_records
+        global history_records
+        n = len(history_records)
+        history_records.clear()
         return {"status": "success", "message": f"已清空 {n} 条历史", "deleted": n}
     except HTTPException:
         raise
@@ -1402,11 +1674,17 @@ async def delete_history_one(history_id: str):
     if not history_id or history_id == "undefined":
         raise HTTPException(status_code=400, detail="历史记录 ID 无效")
     try:
-        if not mysql_client or not hasattr(mysql_client, "delete_history"):
-            raise HTTPException(status_code=501, detail="历史删除功能未就绪")
-        n = mysql_client.delete_history(history_id)
-        if n == 0:
+        if mysql_client and hasattr(mysql_client, "delete_history"):
+            n = mysql_client.delete_history(history_id)
+            if n == 0:
+                raise HTTPException(status_code=404, detail="历史记录不存在")
+            return {"status": "success", "message": "已删除", "deleted": 1}
+        # 无 MySQL 时退回到内存 history_records
+        global history_records
+        hid = str(history_id)
+        if hid not in history_records:
             raise HTTPException(status_code=404, detail="历史记录不存在")
+        del history_records[hid]
         return {"status": "success", "message": "已删除", "deleted": 1}
     except HTTPException:
         raise
@@ -1428,9 +1706,17 @@ async def batch_delete_history(body: BatchDeleteHistoryBody):
     if not ids:
         raise HTTPException(status_code=400, detail="请提供 history_ids 或 ids")
     try:
-        if not mysql_client or not hasattr(mysql_client, "delete_history_batch"):
-            raise HTTPException(status_code=501, detail="批量删除功能未就绪")
-        n = mysql_client.delete_history_batch(ids)
+        if mysql_client and hasattr(mysql_client, "delete_history_batch"):
+            n = mysql_client.delete_history_batch(ids)
+            return {"status": "success", "message": f"已删除 {n} 条", "deleted": n}
+        # 无 MySQL 时退回到内存 history_records
+        global history_records
+        n = 0
+        for hid in ids:
+            key = str(hid)
+            if key in history_records:
+                del history_records[key]
+                n += 1
         return {"status": "success", "message": f"已删除 {n} 条", "deleted": n}
     except HTTPException:
         raise
@@ -1485,12 +1771,30 @@ async def get_kg_list():
 # 返回 graph_id, graph_name, entity_count, relation_count，便于 GraphView 图谱切换；按当前用户过滤，切换图谱时只显示该图谱数据
 @app.get("/api/graph/list", tags=["知识图谱"])
 async def get_graph_list(request: Request):
-    """获取图谱列表，格式与 GraphView 的 graphList 一致；仅返回当前用户的图谱"""
+    """获取图谱列表。始终包含默认图谱（user_id 为 NULL）；已登录用户另加自己的图谱；未登录看默认+全部。"""
     try:
         if not mysql_client:
             return {"status": "success", "data": {"list": [], "total": 0}}
         current_user_id = get_current_user_id(request)
-        kg_records = mysql_client.get_graphs(user_id=current_user_id)
+        filter_user_id = None if (current_user_id == "default_user" or not current_user_id) else current_user_id
+        # 默认图谱（user_id IS NULL）无论登录与否都可见；若库里一条都没有则自动插入一条默认图谱
+        default_records = mysql_client.get_default_graphs(limit=50)
+        all_or_user = mysql_client.get_graphs(user_id=filter_user_id, limit=100) if filter_user_id else mysql_client.get_graphs(user_id=None, limit=100)
+        if not default_records and not all_or_user and hasattr(mysql_client, "ensure_default_graph"):
+            mysql_client.ensure_default_graph()
+            default_records = mysql_client.get_default_graphs(limit=50)
+        if filter_user_id:
+            user_records = mysql_client.get_graphs(user_id=filter_user_id, limit=100)
+            by_id = {(r.get("graph_id") or r.get("id")): r for r in default_records}
+            for r in user_records:
+                by_id[r.get("graph_id") or r.get("id")] = r
+            kg_records = list(by_id.values())
+        else:
+            all_records = mysql_client.get_graphs(user_id=None, limit=100)
+            by_id = {(r.get("graph_id") or r.get("id")): r for r in default_records}
+            for r in all_records:
+                by_id[r.get("graph_id") or r.get("id")] = r
+            kg_records = list(by_id.values())
         list_ = []
         for r in kg_records:
             gid = r.get("graph_id", "") or r.get("id", "")
@@ -1515,12 +1819,14 @@ async def get_graph_list(request: Request):
 async def clear_graph_all(request: Request):
     """清空所有图谱：Neo4j 全部删除 + MySQL knowledge_graphs 清空"""
     try:
+        n = 0
         if neo4j_client:
-            neo4j_client.delete_all()
+            try:
+                neo4j_client.delete_all()
+            except Exception as e:
+                logger.warning(f"Neo4j 清空失败（继续清理 MySQL）: {e}")
         if mysql_client and hasattr(mysql_client, "clear_all_graphs"):
             n = mysql_client.clear_all_graphs()
-        else:
-            n = 0
         return {"status": "success", "message": "已清空图谱", "deleted_graphs": n}
     except Exception as e:
         logger.error(f"清空图谱失败: {e}")
@@ -1529,7 +1835,7 @@ async def clear_graph_all(request: Request):
 
 @app.delete("/api/graph/{graph_id}", tags=["知识图谱"])
 async def delete_graph_one(request: Request, graph_id: str):
-    """按 graph_id 删除单个图谱（仅 MySQL；Neo4j 当前未按图隔离则仅删元数据）"""
+    """按 graph_id 或 data_source（如 file_id）删除单个图谱；仅 MySQL 元数据"""
     if not graph_id or graph_id == "undefined":
         raise HTTPException(status_code=400, detail="图谱 ID 无效")
     try:
@@ -1543,8 +1849,9 @@ async def delete_graph_one(request: Request, graph_id: str):
             raise HTTPException(status_code=404, detail="知识图谱不存在")
         if rec.get("user_id") and rec.get("user_id") != current_user_id:
             raise HTTPException(status_code=403, detail="无权删除该图谱")
-        mysql_client.delete_graph(graph_id)
-        return {"status": "success", "message": "已删除", "graph_id": graph_id}
+        actual_graph_id = rec.get("graph_id") or rec.get("id") or graph_id
+        mysql_client.delete_graph(actual_graph_id)
+        return {"status": "success", "message": "已删除", "graph_id": actual_graph_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -1725,6 +2032,189 @@ async def get_kg_relations(graph_id: str):
         logger.error(f"获取知识图谱关系列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取知识图谱关系列表失败: {str(e)}")
 
+
+# =============== 患者教育持久化 API（我的患者教育） ===============
+
+
+@app.post("/api/patient-education/generate-images", tags=["患者教育"])
+async def generate_patient_education_images(req: Dict[str, Any]):
+  """
+  患者教育配图生成接口：
+  - 输入: 患者教育的 title + sections[{heading, content}]
+  - 输出: 每个小节最多一张插图 [{section_index, url, prompt}]
+
+  通常由前端患者教育中心调用，在文字内容生成完成后再请求本接口生成插图。
+  """
+  try:
+      title = str(req.get("title") or "").strip()
+      sections = req.get("sections") or []
+      if not title or not isinstance(sections, list):
+          raise HTTPException(status_code=400, detail="title 或 sections 缺失/格式错误")
+      images = generate_section_images_glm(title, sections)
+      return {"images": images}
+  except HTTPException:
+      raise
+  except Exception as e:
+      logger.error(f"患者教育配图生成失败: {e}")
+      raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/patient-education/save", tags=["患者教育"])
+async def save_patient_education(req: PatientEducationSaveRequest, request: Request):
+    """
+    保存一条患者教育记录到 MySQL。
+    - 使用当前登录用户 user_id（从 token / header 中获取）
+    - content_json: 完整 {title, sections, summary}
+    - images_json: 可选配图 [{section_index, url, prompt}]
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置，无法保存患者教育记录")
+
+    _ensure_patient_education_table()
+
+    current_user_id = get_current_user_id(request) or "anonymous"
+    import uuid
+    import json as _json
+
+    pe = req.patient_education or {}
+    title = str(pe.get("title") or req.topic or "").strip() or "未命名患者教育"
+    pe_id = str(uuid.uuid4())
+
+    try:
+        content_json = _json.dumps(pe, ensure_ascii=False)
+        images_json = _json.dumps(req.images, ensure_ascii=False) if req.images else None
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"患者教育内容序列化失败: {e}")
+
+    sql = """
+    INSERT INTO patient_education (id, user_id, topic, title, content_json, images_json)
+    VALUES (:id, :user_id, :topic, :title, :content_json, :images_json)
+    """
+    params = {
+        "id": pe_id,
+        "user_id": current_user_id,
+        "topic": req.topic.strip(),
+        "title": title,
+        "content_json": content_json,
+        "images_json": images_json,
+    }
+    try:
+        mysql_client.execute_update(sql, params)
+    except Exception as e:
+        logger.error(f"保存患者教育记录失败: {e}")
+        raise HTTPException(status_code=500, detail="保存患者教育记录失败")
+
+    return {"id": pe_id, "title": title}
+
+
+@app.get("/api/patient-education/list", tags=["患者教育"])
+async def list_patient_education(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """
+    获取当前用户的患者教育列表（简要信息）。
+    返回字段：id, title, topic, created_at, has_images
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置，无法获取患者教育列表")
+
+    _ensure_patient_education_table()
+    current_user_id = get_current_user_id(request) or "anonymous"
+
+    sql = """
+    SELECT id, title, topic, created_at, images_json
+    FROM patient_education
+    WHERE user_id = :user_id
+    ORDER BY created_at DESC
+    LIMIT :limit OFFSET :offset
+    """
+    params = {
+        "user_id": current_user_id,
+        "limit": limit,
+        "offset": offset,
+    }
+    try:
+        rows = mysql_client.execute_query(sql, params)
+    except Exception as e:
+        logger.error(f"获取患者教育列表失败: {e}")
+        raise HTTPException(status_code=500, detail="获取患者教育列表失败")
+
+    result = []
+    for r in rows or []:
+        created = r.get("created_at")
+        if hasattr(created, "isoformat"):
+            created_at = created.isoformat()
+        else:
+            created_at = str(created) if created else ""
+        has_images = bool(r.get("images_json"))
+        result.append(
+            {
+                "id": r.get("id"),
+                "title": r.get("title"),
+                "topic": r.get("topic"),
+                "created_at": created_at,
+                "has_images": has_images,
+            }
+        )
+
+    return {"items": result}
+
+
+@app.get("/api/patient-education/{pe_id}", tags=["患者教育"])
+async def get_patient_education_detail(pe_id: str, request: Request):
+    """
+    获取单条患者教育详情（含结构化内容与配图）。
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置，无法获取患者教育详情")
+
+    _ensure_patient_education_table()
+    current_user_id = get_current_user_id(request) or "anonymous"
+
+    sql = """
+    SELECT id, user_id, topic, title, content_json, images_json, created_at, updated_at
+    FROM patient_education
+    WHERE id = :id AND user_id = :user_id
+    """
+    params = {"id": pe_id, "user_id": current_user_id}
+    try:
+        rows = mysql_client.execute_query(sql, params)
+    except Exception as e:
+        logger.error(f"获取患者教育详情失败: {e}")
+        raise HTTPException(status_code=500, detail="获取患者教育详情失败")
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="患者教育记录不存在或无权访问")
+
+    row = rows[0]
+    import json as _json
+
+    try:
+        content = _json.loads(row.get("content_json") or "{}")
+    except Exception:
+        content = {}
+    try:
+        images = _json.loads(row.get("images_json") or "[]") if row.get("images_json") else []
+    except Exception:
+        images = []
+
+    created = row.get("created_at")
+    updated = row.get("updated_at")
+    created_at = created.isoformat() if hasattr(created, "isoformat") else str(created) if created else ""
+    updated_at = updated.isoformat() if hasattr(updated, "isoformat") else str(updated) if updated else ""
+
+    return {
+        "id": row.get("id"),
+        "topic": row.get("topic"),
+        "title": row.get("title"),
+        "patient_education": content,
+        "images": images,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+
 # 为前端添加的兼容API - 获取图谱数据
 # 返回 nodes、edges（=relations）在顶层，便于 GraphView 使用 response.data.nodes / response.data.edges；按当前用户过滤，传 graph_id 时只返回该图谱
 @app.get("/api/graph/data", tags=["知识图谱"])
@@ -1766,17 +2256,31 @@ async def get_graph_data(
             return nodes, relations
 
         current_user_id = get_current_user_id(request)
+        filter_user_id = None if (current_user_id == "default_user" or not current_user_id) else current_user_id
         if graph_id:
             rec = mysql_client.get_graph_by_id(graph_id)
             if not rec:
                 rec = mysql_client.get_graph_by_data_source(graph_id)
             if not rec:
                 raise HTTPException(status_code=404, detail="知识图谱不存在")
-            if rec.get("user_id") != current_user_id:
+            # 默认图谱（user_id 为空）所有人可见；否则须为当前用户的图谱
+            if rec.get("user_id") and filter_user_id and rec.get("user_id") != filter_user_id:
                 raise HTTPException(status_code=404, detail="知识图谱不存在或无权访问")
             graphs = [rec]
         else:
-            graphs = mysql_client.get_graphs(user_id=current_user_id)
+            default_records = mysql_client.get_default_graphs(limit=50)
+            if filter_user_id:
+                user_records = mysql_client.get_graphs(user_id=filter_user_id, limit=100)
+                by_id = {(r.get("graph_id") or r.get("id")): r for r in default_records}
+                for r in user_records:
+                    by_id[r.get("graph_id") or r.get("id")] = r
+                graphs = list(by_id.values())
+            else:
+                all_records = mysql_client.get_graphs(user_id=None, limit=100)
+                by_id = {(r.get("graph_id") or r.get("id")): r for r in default_records}
+                for r in all_records:
+                    by_id[r.get("graph_id") or r.get("id")] = r
+                graphs = list(by_id.values())
 
         all_nodes = []
         all_relations = []
@@ -1816,6 +2320,13 @@ async def get_graph_data(
                 })
             if len(all_nodes) >= limit:
                 break
+
+        # 若图谱记录存在但 graph_data 为空（如 init_mysql 只插了元数据未插 graph_data），返回一个占位节点，避免画布完全空白
+        if not all_nodes and graphs:
+            first = graphs[0]
+            name = (first.get("graph_name") or first.get("name") or "默认图谱") + "（暂无节点数据，请上传并构建后查看）"
+            gid = first.get("graph_id") or first.get("id") or "default"
+            all_nodes = [{"id": f"_placeholder_{gid}", "name": name, "category": "entity"}]
 
         # 顶层 nodes、edges 供 GraphView（response.data.nodes / response.data.edges）
         # data 保留旧形状，兼容既用 data.nodes / data.relations 的调用
