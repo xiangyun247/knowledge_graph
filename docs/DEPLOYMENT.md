@@ -12,6 +12,7 @@
 
 | 服务 | 宿主机端口 | 容器端口 | 说明 |
 |------|------------|----------|------|
+| **frontend** | 80 | 80 | Vue 前端（Nginx 托管，/api 反代到 backend） |
 | **backend** | 5001 | 5001 | FastAPI API 与文档（/docs） |
 | **Neo4j** | 7474 | 7474 | HTTP 控制台 |
 | **Neo4j Bolt** | 7687 | 7687 | 驱动连接 |
@@ -92,14 +93,38 @@ docker-compose up -d --build
 docker-compose ps
 ```
 
-期望：backend、neo4j、mysql、redis、celery-worker、hadoop-namenode 等为 **Up** 或 **(healthy)**；hadoop-historyserver 为 **(unhealthy)** 可忽略。
+期望：backend、neo4j、mysql、redis、celery-worker、hadoop-namenode 等为 **Up** 或 **(healthy)**；frontend 若已配置则为 **Up**；hadoop-historyserver 为 **(unhealthy)** 可忽略。
 
 ### 4. 验证
 
+- **前端页面**（若已启动 frontend）：<http://localhost>
 - API 文档：<http://localhost:5001/docs>
 - Neo4j 控制台：<http://localhost:7474>
 - YARN：<http://localhost:8088>
 - HDFS：<http://localhost:9870>
+
+### 5. 前端 Docker 部署（可选）
+
+前端作为 Docker 服务，与 backend 同网，Nginx 托管静态文件并将 `/api` 反代到 backend。
+
+**前置条件**：前端项目（如 `vue_test_style` 或 `knowledge_gragh_frontend`）需与 `knowledge_gragh` 同级目录，且包含 `docker/Dockerfile` 与 `docker/nginx.conf`。
+
+```bash
+# 目录结构示例
+project/
+├── knowledge_gragh/    # 后端
+└── vue_test_style/     # 前端（含 docker/Dockerfile、docker/nginx.conf）
+```
+
+**启动**：`docker-compose up -d` 会一并构建并启动 frontend。若前端路径不同，在 `.env` 中设置：
+
+```bash
+FRONTEND_CONTEXT=/path/to/vue_test_style
+```
+
+**访问**：启动后访问 <http://localhost> 即可打开前端，`/api` 请求自动转发到 backend:5001，同源无 CORS 问题。
+
+**与手动部署的区别**：若采用 `docs/DEPLOYMENT_FRONTEND_STEP8.md` 的手动方式（云主机 clone 前端、npm build、apt install nginx），则无需启动 compose 的 frontend 服务；两种方式二选一即可。
 
 ---
 
@@ -114,6 +139,7 @@ docker-compose ps
 | `docker-compose restart backend` | 仅重启 backend |
 | `docker-compose down` | 停止并删除容器（不删数据卷） |
 | `docker-compose down -v` | 停止并删除容器及**所有**数据卷（慎用） |
+| `docker-compose up -d --build frontend` | 仅重新构建并启动 frontend |
 
 ---
 
@@ -147,6 +173,12 @@ docker-compose ps
 
 - 确认 `.env` 中 `NEO4J_PASSWORD`、`MYSQL_PASSWORD` 与 compose 中 neo4j、mysql 的配置一致（若未改 .env，则使用 compose 内默认值）。
 - 确认 `docker-compose ps` 中 neo4j、mysql 为 **(healthy)** 后再看 backend 日志。
+
+### Frontend 构建失败
+
+- **现象**：`docker-compose up -d` 时 frontend 构建报错，如「context not found」。
+- **原因**：前端项目路径不正确，默认期望 `../vue_test_style`（与 knowledge_gragh 同级）。
+- **处理**：在 `.env` 中设置 `FRONTEND_CONTEXT` 为实际前端目录绝对路径；或若不需要 Docker 前端，可注释掉 docker-compose.yml 中的 frontend 服务，改用 `docs/DEPLOYMENT_FRONTEND_STEP8.md` 的手动部署。
 
 ---
 
@@ -182,6 +214,8 @@ docker-compose ps
 
 ## 八、相关文档
 
+- **架构说明**：`docs/ARCHITECTURE.md`（系统架构、数据流、技术栈）
+- **演示脚本**：`docs/DEMO_SCRIPT.md`（5–8 分钟固定演示流程）
 - **Docker 步骤 1**：`docs/DOCKER_STEP1.md`（compose 与 Dockerfile、MySQL 库名、依赖）
 - **Docker 步骤 2**：`docs/DOCKER_STEP2.md`（环境变量与密钥管理）
 - **云主机与后端上云**：`docs/DEPLOYMENT_CLOUD_STEP4.md`（学生向简明步骤）

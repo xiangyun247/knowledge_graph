@@ -4,7 +4,8 @@
 文本清洗 Mapper
 用于 Hadoop MapReduce 任务
 
-从 HDFS 读取提取的文本，进行医学文本清洗
+从 HDFS 读取提取的文本，进行医学文本清洗。
+逻辑与 backend.text_clean.clean_medical_text 保持一致，Mapper 需独立运行故保留本地实现。
 输出格式：文件路径 \t 清洗后的文本
 """
 

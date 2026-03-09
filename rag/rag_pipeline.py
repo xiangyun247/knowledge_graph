@@ -1,7 +1,7 @@
 """
 RAG 流水线
 整合检索和生成的完整流程
-支持图检索、向量检索、混合检索
+支持图检索、向量检索、混合检索（Hybrid RAG）
 """
 
 import config
@@ -12,6 +12,7 @@ from llm.client import LLMClient, EmbeddingClient
 from db.neo4j_client import Neo4jClient
 from rag.query_parser import QueryParser
 from rag.graph_retriever import GraphRetriever
+from rag import hybrid_retriever
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,9 @@ class RAGPipeline:
             self,
             neo4j_client: Neo4jClient,
             llm_client: LLMClient,
-            embedding_client: EmbeddingClient
+            embedding_client: EmbeddingClient,
+            chroma_store: Optional[Any] = None,
+            mysql_client: Optional[Any] = None,
     ):
         """
         初始化 RAG 流水线
@@ -32,10 +35,14 @@ class RAGPipeline:
             neo4j_client: Neo4j 客户端
             llm_client: LLM 客户端
             embedding_client: Embedding 客户端
+            chroma_store: Chroma 向量库（可选），用于 Hybrid RAG 文档检索
+            mysql_client: MySQL 客户端（可选），用于 Hybrid RAG 图检索时按 user_id 过滤
         """
         self.neo4j = neo4j_client
         self.llm = llm_client
         self.embedding = embedding_client
+        self._chroma_store = chroma_store
+        self._mysql_client = mysql_client
 
         # 初始化组件
         self.query_parser = QueryParser(llm_client)
@@ -47,6 +54,30 @@ class RAGPipeline:
         self.max_context_length = 3000  # 上下文最大长度
 
         logger.info("RAG 流水线初始化完成")
+
+    def _get_chroma_store(self) -> Optional[Any]:
+        """获取 ChromaStore，未传入时尝试懒加载。"""
+        if self._chroma_store is not None:
+            return self._chroma_store
+        try:
+            from backend.chroma_store import ChromaStore
+            self._chroma_store = ChromaStore()
+            return self._chroma_store
+        except Exception as e:
+            logger.debug("ChromaStore 不可用，跳过文档向量检索: %s", e)
+            return None
+
+    def _get_mysql_client(self) -> Optional[Any]:
+        """获取 MySQL 客户端，未传入时尝试懒加载。"""
+        if self._mysql_client is not None:
+            return self._mysql_client
+        try:
+            from db.mysql_client import get_mysql_client
+            self._mysql_client = get_mysql_client()
+            return self._mysql_client
+        except Exception as e:
+            logger.debug("MySQL 不可用，跳过用户图谱过滤: %s", e)
+            return None
 
     # ✅ 新增：简化版 query 方法（主要对外接口）
     def query(self, question: str, top_k: int = 5) -> Dict[str, Any]:
@@ -221,18 +252,22 @@ class RAGPipeline:
             query: str,
             use_graph: bool = True,
             use_vector: bool = True,
+            use_hybrid: bool = False,
             top_k: Optional[int] = None,
-            return_sources: bool = True
+            return_sources: bool = True,
+            user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         回答用户问题（完整版，支持更多配置）
 
         Args:
             query: 用户问题
-            use_graph: 是否使用图检索
-            use_vector: 是否使用向量检索
+            use_graph: 是否使用图检索（use_hybrid=False 时生效）
+            use_vector: 是否使用向量检索（use_hybrid=False 时生效）
+            use_hybrid: 是否使用混合检索（图+Chroma+关键词，RRF 融合）
             top_k: 返回结果数量
             return_sources: 是否返回信息来源
+            user_id: 用户 ID（use_hybrid 时用于 Chroma 文档过滤）
 
         Returns:
             回答结果字典
@@ -240,22 +275,38 @@ class RAGPipeline:
         start_time = time.time()
 
         logger.info(f"开始处理查询: {query}")
-        logger.info(f"检索策略: 图检索={use_graph}, 向量检索={use_vector}")
+        if use_hybrid:
+            logger.info("检索策略: 混合检索（图+文档+关键词 RRF）")
+        else:
+            logger.info(f"检索策略: 图检索={use_graph}, 向量检索={use_vector}")
 
         try:
             # 1. 查询解析
             logger.info("步骤 1/4: 解析查询...")
             parsed_query = self.query_parser.parse(query)
+            parsed_query.setdefault("query", query)
             logger.info(f"[OK] 查询解析完成: 意图={parsed_query['intent']}, 实体数={len(parsed_query['entities'])}")
 
             # 2. 信息检索
             logger.info("步骤 2/4: 检索相关信息...")
-            retrieval_results = self._retrieve_information(
-                parsed_query,
-                use_graph=use_graph,
-                use_vector=use_vector,
-                top_k=top_k or self.vector_top_k
-            )
+            if use_hybrid:
+                hybrid_items = self._retrieve_hybrid(
+                    parsed_query,
+                    top_k=top_k or self.vector_top_k,
+                    top_k_per_source=15,
+                    use_graph=True,
+                    use_doc_vector=True,
+                    use_keyword=True,
+                    user_id=user_id,
+                )
+                retrieval_results = self._hybrid_items_to_sources(hybrid_items)
+            else:
+                retrieval_results = self._retrieve_information(
+                    parsed_query,
+                    use_graph=use_graph,
+                    use_vector=use_vector,
+                    top_k=top_k or self.vector_top_k
+                )
             logger.info(f"[OK] 信息检索完成: 共检索到 {len(retrieval_results)} 条信息")
 
             # 3. 构建上下文
@@ -361,7 +412,7 @@ class RAGPipeline:
         # 3. 如果没有任何结果，尝试关键词检索
         if not all_results:
             logger.warning("图检索和向量检索均无结果，尝试关键词检索")
-            keywords = parsed_query.get("keywords", [])
+            keywords = parsed_query.get("keywords", []) or ([query_text] if query_text else [])
             if keywords:
                 try:
                     keyword_results = self._keyword_search(keywords, limit=top_k)
@@ -370,10 +421,153 @@ class RAGPipeline:
                 except Exception as e:
                     logger.error(f"关键词检索失败: {e}")
 
+        # 3.5 空结果兜底：用 query 分词做二次关键词检索
+        if not all_results and query_text:
+            try:
+                import re
+                words = [w for w in re.findall(r"[\u4e00-\u9fff\w]+", query_text) if len(w) >= 2][:5]
+                if words:
+                    fallback = self._keyword_search(words, limit=top_k)
+                    if fallback:
+                        all_results.extend(fallback)
+                        logger.info("空结果兜底(关键词分词): %d 条", len(fallback))
+            except Exception as e:
+                logger.debug("空结果兜底失败: %s", e)
+
         # 4. 去重和排序
         all_results = self._deduplicate_and_rank(all_results)
 
         return all_results[:top_k * 2]
+
+    def _retrieve_hybrid(
+        self,
+        parsed_query: Dict[str, Any],
+        *,
+        top_k: int = 10,
+        top_k_per_source: int = 15,
+        use_graph: bool = True,
+        use_doc_vector: bool = True,
+        use_keyword: bool = True,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        混合检索：图 + Chroma 文档 + 关键词，RRF 融合。
+
+        Returns:
+            List[HybridItem]，按 RRF 分数降序，每项含 content、source、rrf_score、raw 等
+        """
+        entity_names = [e["name"] for e in parsed_query.get("entities", [])]
+        query_text = parsed_query.get("normalized_query", parsed_query.get("query", ""))
+
+        graph_items: List[Dict[str, Any]] = []
+        doc_items: List[Dict[str, Any]] = []
+        keyword_items: List[Dict[str, Any]] = []
+
+        # 1. 图检索（user_id 时优先 MySQL 用户图谱，否则 Neo4j）
+        if use_graph and entity_names:
+            try:
+                graph_results: List[Dict[str, Any]] = []
+                if user_id:
+                    mc = self._get_mysql_client()
+                    if mc:
+                        from rag.mysql_graph_retriever import retrieve_from_mysql_graphs
+                        graph_results = retrieve_from_mysql_graphs(
+                            mc,
+                            entity_names=entity_names,
+                            user_id=user_id,
+                            graph_id=None,
+                            max_depth=self.max_graph_depth,
+                            limit=top_k_per_source,
+                        )
+                        if graph_results:
+                            logger.info("混合检索-图(MySQL 用户图谱): %d 条", len(graph_results))
+                if not graph_results:
+                    graph_results = self.graph_retriever.retrieve(
+                        query=query_text,
+                        entity_names=entity_names,
+                        max_depth=self.max_graph_depth,
+                        limit=top_k_per_source,
+                    )
+                    if graph_results:
+                        logger.info("混合检索-图(Neo4j): %d 条", len(graph_results))
+                graph_items = hybrid_retriever.graph_results_to_hybrid(
+                    graph_results, top_k_per_source=top_k_per_source
+                )
+                logger.info("混合检索-图: %d 条", len(graph_items))
+            except Exception as e:
+                logger.error("混合检索-图失败: %s", e)
+
+        # 2. Chroma 文档检索
+        if use_doc_vector:
+            chroma = self._get_chroma_store()
+            if chroma:
+                try:
+                    where = {"user_id": user_id} if user_id else None
+                    doc_results = chroma.search(
+                        query_text, k=top_k_per_source, where=where
+                    )
+                    doc_items = hybrid_retriever.chroma_results_to_hybrid(
+                        doc_results, top_k_per_source=top_k_per_source
+                    )
+                    logger.info("混合检索-文档: %d 条", len(doc_items))
+                except Exception as e:
+                    logger.error("混合检索-文档失败: %s", e)
+
+        # 3. 关键词检索
+        if use_keyword:
+            try:
+                keywords = parsed_query.get("keywords", []) or [query_text]
+                kw_results = self._keyword_search(keywords, limit=top_k_per_source)
+                keyword_items = hybrid_retriever.keyword_results_to_hybrid(
+                    kw_results, top_k_per_source=top_k_per_source
+                )
+                logger.info("混合检索-关键词: %d 条", len(keyword_items))
+            except Exception as e:
+                logger.error("混合检索-关键词失败: %s", e)
+
+        # 4. RRF 融合
+        fused = hybrid_retriever.fuse_hybrid_three_way(
+            graph_items, doc_items, keyword_items, k=hybrid_retriever.DEFAULT_RRF_K
+        )
+        logger.info("混合检索-RRF 融合: %d 条", len(fused))
+
+        # 5. 空结果兜底：用 query 分词做二次关键词检索
+        if not fused and query_text:
+            try:
+                import re
+                words = [w for w in re.findall(r"[\u4e00-\u9fff\w]+", query_text) if len(w) >= 2][:5]
+                if words:
+                    fallback_kw = self._keyword_search(words, limit=top_k_per_source)
+                    if fallback_kw:
+                        fallback_items = hybrid_retriever.keyword_results_to_hybrid(
+                            fallback_kw, top_k_per_source=top_k_per_source
+                        )
+                        fused = fallback_items[:top_k]
+                        logger.info("混合检索-空结果兜底(关键词): %d 条", len(fused))
+            except Exception as e:
+                logger.debug("空结果兜底失败: %s", e)
+
+        return fused[:top_k]
+
+    def _hybrid_items_to_sources(
+        self, hybrid_items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        将 HybridItem 列表转为 _build_context / _format_single_result 可用的格式。
+        """
+        results = []
+        for i, item in enumerate(hybrid_items):
+            content = item.get("content", "")
+            results.append({
+                "type": item.get("source", "unknown"),
+                "name": (content[:50] + "..." if len(content) > 50 else content) or "来源",
+                "description": content,
+                "relevance_score": item.get("rrf_score", 0),
+                "labels": [item.get("source", "")],
+                "content_key": item.get("content_key"),
+                "raw": item.get("raw"),
+            })
+        return results
 
     def _vector_search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """向量检索"""

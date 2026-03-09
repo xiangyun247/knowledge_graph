@@ -6,6 +6,7 @@
 - graph_retrieve: 图检索 GraphRetriever.retrieve
 - entity_search: 实体搜索 Neo4j.search_entities（或 MySQL 回退）
 - doc_search: 文档检索 ChromaStore.search
+- hybrid_retrieve: 混合检索（图+Chroma+关键词 RRF 融合）
 - graph_list: 图谱列表 mysql.get_graphs
 - graph_data: 图谱数据（节点、边）mysql + graph_data 解析
 """
@@ -25,6 +26,7 @@ _neo4j = None
 _mysql = None
 _chroma = None
 _graph_retriever = None
+_rag_pipeline = None
 
 
 def _neo4j_client():
@@ -82,6 +84,45 @@ def _graph_retriever_impl():
     except Exception as e:
         logger.warning("GraphRetriever 不可用: %s", e)
     return None
+
+
+def _rag_pipeline_impl():
+    """懒加载 RAGPipeline，用于 hybrid_retrieve。"""
+    global _rag_pipeline
+    if _rag_pipeline is not None:
+        return _rag_pipeline
+    try:
+        import os
+        import config
+        from llm.client import LLMClient, EmbeddingClient
+        from rag.rag_pipeline import RAGPipeline
+
+        nc = _neo4j_client()
+        if nc is None:
+            return None
+        ak = getattr(config, "DEEPSEEK_API_KEY", None) or os.getenv("DEEPSEEK_API_KEY")
+        if not ak:
+            logger.warning("DEEPSEEK_API_KEY 未配置，RAGPipeline 不可用")
+            return None
+        lc = LLMClient(
+            api_key=ak,
+            base_url=getattr(config, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            model=getattr(config, "DEEPSEEK_MODEL", "deepseek-chat"),
+        )
+        ec = EmbeddingClient()
+        chroma = _chroma_store()
+        mysql = _mysql_client()
+        _rag_pipeline = RAGPipeline(
+            neo4j_client=nc,
+            llm_client=lc,
+            embedding_client=ec,
+            chroma_store=chroma,
+            mysql_client=mysql,
+        )
+        return _rag_pipeline
+    except Exception as e:
+        logger.warning("RAGPipeline 不可用: %s", e)
+        return None
 
 
 # ---------- entity_search 的 MySQL 回退（与 app._search_graph_entities 逻辑一致）----------
@@ -228,6 +269,45 @@ def doc_search(
         return "\n\n".join(lines)
     except Exception as e:
         return f"[文档检索异常: {e}]"
+
+
+@tool
+def hybrid_retrieve(
+    query: str,
+    top_k: int = 10,
+    top_k_per_source: int = 15,
+) -> str:
+    """
+    混合检索：图+文档+关键词三路 RRF 融合，返回综合多源知识的上下文文本。适合需要同时利用图谱、文献、关键词的复杂问题，一次调用即可获得融合后的检索结果，无需分别调用 graph_retrieve 与 doc_search。
+    参数：query 为用户问题或检索意图；top_k 最终返回条数，默认 10；top_k_per_source 每路最多取几条参与融合，默认 15。仅检索当前用户知识库中的文档。
+    """
+    rp = _rag_pipeline_impl()
+    if rp is None:
+        return "[混合检索暂时不可用：RAGPipeline 未就绪，请检查 Neo4j、LLM、Chroma 等依赖]"
+    try:
+        parsed = rp.query_parser.parse(query)
+        parsed.setdefault("query", query)
+        uid = get_agent_user_id()
+        items = rp._retrieve_hybrid(
+            parsed,
+            top_k=top_k,
+            top_k_per_source=top_k_per_source,
+            use_graph=True,
+            use_doc_vector=True,
+            use_keyword=True,
+            user_id=uid,
+        )
+        if not items:
+            return "[混合检索未找到相关结果]"
+        lines = []
+        for i, it in enumerate(items, 1):
+            src = it.get("source", "")
+            content = (it.get("content") or "").strip()
+            if content:
+                lines.append(f"[{i}] ({src}): {content}")
+        return "\n\n".join(lines) if lines else "[混合检索未找到有效内容]"
+    except Exception as e:
+        return f"[混合检索异常: {e}]"
 
 
 @tool
@@ -450,6 +530,7 @@ def get_all_tools():
         graph_retrieve,
         entity_search,
         doc_search,
+        hybrid_retrieve,
         graph_list,
         graph_data,
         get_kg_build_status,

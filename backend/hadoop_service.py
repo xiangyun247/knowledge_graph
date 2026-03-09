@@ -627,6 +627,60 @@ class HadoopService:
         logger.info(f"脚本已上传到 HDFS: {hdfs_path}")
         return hdfs_path
 
+    def read_extracted_text_from_hdfs(self, hdfs_dir_path: str) -> Dict[str, str]:
+        """
+        从 HDFS 目录读取 MapReduce 文本清洗阶段的输出（格式：路径 \\t 文本，每行一个文件），
+        解析为 file_id -> 全文，供批量构建使用。
+
+        Args:
+            hdfs_dir_path: 例如 /knowledge_graph/processed/text_clean
+
+        Returns:
+            {file_id: full_text}，路径中 uploads/{file_id}/ 用于解析 file_id
+        """
+        result = {}
+        try:
+            # 使用 -getmerge 将 part-* 合并到容器内临时文件，再 cat 出
+            merge_target = f"/tmp/merged_text_clean_{int(time.time())}.txt"
+            getmerge_cmd = [
+                "docker", "exec", "hadoop-namenode",
+                "hadoop", "fs", "-getmerge", "-nl", hdfs_dir_path, merge_target,
+            ]
+            run = subprocess.run(getmerge_cmd, capture_output=True, text=True, timeout=120)
+            if run.returncode != 0:
+                logger.warning("读取 HDFS 文本输出失败 getmerge: %s", run.stderr)
+                return result
+            try:
+                cat_cmd = ["docker", "exec", "hadoop-namenode", "cat", merge_target]
+                cat_run = subprocess.run(cat_cmd, capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace")
+                if cat_run.returncode != 0:
+                    return result
+                for line in (cat_run.stdout or "").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    idx = line.find("\t")
+                    if idx <= 0:
+                        continue
+                    path = line[:idx]
+                    text = line[idx + 1:]
+                    # 路径形如 /knowledge_graph/uploads/file_id/filename.pdf
+                    if "uploads/" not in path:
+                        continue
+                    file_id = path.split("uploads/")[-1].split("/")[0]
+                    if file_id:
+                        result[file_id] = text
+            finally:
+                subprocess.run(
+                    ["docker", "exec", "hadoop-namenode", "rm", "-f", merge_target],
+                    capture_output=True,
+                    timeout=10,
+                )
+            logger.info("从 HDFS 读取到 %d 个文件的文本", len(result))
+        except Exception as e:
+            logger.warning("read_extracted_text_from_hdfs 失败: %s", e)
+        return result
+
 
 def get_hadoop_service() -> HadoopService:
     """

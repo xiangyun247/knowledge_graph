@@ -51,7 +51,27 @@ def init() -> bool:
         # Embedding
         ec = EmbeddingClient()
 
-        _rag = RAGPipeline(neo4j_client=nc, llm_client=lc, embedding_client=ec)
+        chroma_store = None
+        try:
+            from backend.chroma_store import ChromaStore
+            chroma_store = ChromaStore()
+        except Exception as e:
+            logger.debug("ChromaStore 不可用，混合检索将不包含文档向量: %s", e)
+
+        mysql_client = None
+        try:
+            from db.mysql_client import get_mysql_client
+            mysql_client = get_mysql_client()
+        except Exception as e:
+            logger.debug("MySQL 不可用，混合检索图将不按用户过滤: %s", e)
+
+        _rag = RAGPipeline(
+            neo4j_client=nc,
+            llm_client=lc,
+            embedding_client=ec,
+            chroma_store=chroma_store,
+            mysql_client=mysql_client,
+        )
         logger.info("query_service: RAG 流水线初始化成功")
         return True
 
@@ -66,9 +86,15 @@ def run_query(
     max_results: int = 5,
     use_graph: bool = True,
     use_vector: bool = True,
+    use_hybrid: bool = False,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     执行问答。优先使用 RAG；若未初始化则尝试 init，仍不可用则返回降级结果。
+
+    Args:
+        use_hybrid: 若为 True，使用混合检索（图+Chroma+关键词 RRF 融合）
+        user_id: 用户 ID，use_hybrid 时用于 Chroma 文档过滤
 
     返回结构与 Chat 前端兼容：answer, response, sources, question, query_type 等。
     """
@@ -95,7 +121,9 @@ def run_query(
             query=question,
             use_graph=use_graph,
             use_vector=use_vector,
+            use_hybrid=use_hybrid,
             top_k=max_results,
+            user_id=user_id,
         )
         # 与 ChatView 兼容：answer、response、sources
         answer = res.get("answer") or ""

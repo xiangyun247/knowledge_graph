@@ -3,12 +3,23 @@
 使用 uvicorn 启动 FastAPI 应用
 """
 
+import os
 import sys
+import warnings
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
+
+# 关闭 ChromaDB 遥测，避免 posthog 报错刷屏
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+# 抑制 requests 与 urllib3/chardet 版本不匹配的警告
+try:
+    from requests import RequestsDependencyWarning
+    warnings.filterwarnings("ignore", category=RequestsDependencyWarning)
+except Exception:
+    warnings.filterwarnings("ignore", message=".*urllib3.*doesn't match.*")
 
 import uvicorn
 import config
@@ -17,6 +28,9 @@ import logging
 # 配置日志
 logging.config.dictConfig(config.LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
+
+# 降低 ChromaDB 遥测相关日志级别，避免 capture() 报错刷屏
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 
 
 def check_dependencies():

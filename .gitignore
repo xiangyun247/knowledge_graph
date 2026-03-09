@@ -142,6 +142,7 @@ logs/
 data/raw/*
 data/processed/*
 data/chroma/
+data/chroma_v2/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/examples/

@@ -177,6 +177,8 @@ class KnowledgeGraphBuilder:
 
                 # 使用 LLM 提取实体和关系
                 extraction_result = self._extract_entities_and_relations(paragraph)
+                # 后处理：实体名规范化、类型校验、关系与实体一致性（建议4）
+                extraction_result = self._validate_and_normalize_extraction(extraction_result)
 
                 # 处理实体
                 for entity in extraction_result.get("entities", []):
@@ -222,6 +224,98 @@ class KnowledgeGraphBuilder:
             logger.error(f"文本处理失败: {e}")
             raise
 
+    @staticmethod
+    def _normalize_entity_name(name: str) -> str:
+        """
+        实体名规范化：strip、全角转半角、多余空格合并。
+        便于同义合并（如「急性 胰腺炎」与「急性胰腺炎」视为同一实体）。
+        """
+        if not name or not isinstance(name, str):
+            return ""
+        s = name.strip()
+        # 全角转半角（数字、字母、空格）
+        out = []
+        for c in s:
+            if c == "\u3000":
+                out.append(" ")
+            elif "\uff01" <= c <= "\uff5e":
+                out.append(chr(ord(c) - 0xfee0))
+            elif "\uff10" <= c <= "\uff19":
+                out.append(chr(ord(c) - 0xfee0))
+            else:
+                out.append(c)
+        s = "".join(out)
+        # 合并多余空格
+        return " ".join(s.split())
+
+    def _validate_and_normalize_extraction(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        后处理校验与规范化（见 docs/OPTIMIZATION_SUGGESTIONS.md 建议4）：
+        - 实体名规范化、同义合并
+        - 实体类型/关系类型校验并映射到合法值
+        - 关系与实体一致性：subject/object 必须在 entities 中，否则仅丢弃并打日志
+        """
+        if not isinstance(result, dict):
+            return {"entities": [], "relations": []}
+        entities_in = result.get("entities") or []
+        relations_in = result.get("relations") or []
+        if not isinstance(entities_in, list):
+            entities_in = []
+        if not isinstance(relations_in, list):
+            relations_in = []
+
+        # 1. 实体名规范化并去重（同义合并）
+        entities_out: List[Dict[str, Any]] = []
+        name_to_entity: Dict[str, Dict[str, Any]] = {}
+        for e in entities_in:
+            if not isinstance(e, dict):
+                continue
+            raw_name = (e.get("name") or "").strip()
+            name = self._normalize_entity_name(raw_name)
+            if not name:
+                continue
+            if name in name_to_entity:
+                logger.debug("同义实体合并: 原始=%s, 规范名=%s", raw_name, name)
+                continue
+            entity_type = (e.get("type") or "").strip()
+            if entity_type not in self.entity_types:
+                logger.warning("实体类型不在配置中，映射为 Disease: name=%s, type=%s", name, entity_type)
+                entity_type = "Disease"
+            entity_out = {
+                "name": name,
+                "type": entity_type,
+                "description": (e.get("description") or "").strip() or name,
+            }
+            name_to_entity[name] = entity_out
+            entities_out.append(entity_out)
+
+        valid_names = set(name_to_entity.keys())
+
+        # 2. 关系：subject/object 必须在实体集中，否则丢弃并打日志；predicate 校验
+        default_relation = "ASSOCIATED_WITH"
+        relations_out: List[Dict[str, str]] = []
+        for r in relations_in:
+            if not isinstance(r, dict):
+                continue
+            sub = self._normalize_entity_name(r.get("subject") or "")
+            obj = self._normalize_entity_name(r.get("object") or "")
+            pred = (r.get("predicate") or "").strip()
+            if not sub or not obj:
+                logger.debug("关系缺少 subject 或 object，丢弃: %s", r)
+                continue
+            if sub not in valid_names:
+                logger.info("关系 subject 不在实体列表中，丢弃该关系: subject=%s, object=%s, predicate=%s", sub, obj, pred)
+                continue
+            if obj not in valid_names:
+                logger.info("关系 object 不在实体列表中，丢弃该关系: subject=%s, object=%s, predicate=%s", sub, obj, pred)
+                continue
+            if pred not in self.relation_types:
+                logger.warning("关系类型不在配置中，映射为 %s: predicate=%s", default_relation, pred)
+                pred = default_relation
+            relations_out.append({"subject": sub, "predicate": pred, "object": obj})
+
+        return {"entities": entities_out, "relations": relations_out}
+
     def _extract_entities_and_relations(self, sentence: str) -> Dict[str, Any]:
         """
         使用 LLM 从句子中提取实体和关系
@@ -232,33 +326,48 @@ class KnowledgeGraphBuilder:
         Returns:
             提取结果 {"entities": [...], "relations": [...]}
         """
-        # 构建提示词
+        # 构建提示词（含 few-shot 与格式约束，见 docs/OPTIMIZATION_SUGGESTIONS.md 建议3）
         prompt = f"""
 请从以下医学文本中提取实体和关系。
 
-实体类型包括：
-{', '.join(self.entity_types)}
+实体类型包括：{', '.join(self.entity_types)}
+关系类型包括：{', '.join(self.relation_types)}
 
-关系类型包括：
-{', '.join(self.relation_types)}
+【输出格式约束】
+- 只输出一个 JSON 对象，包含且仅包含 "entities" 和 "relations" 两个 key。
+- relations 中的 subject 和 object 必须是 entities 中某一项的 name，不得新增未列出的实体。
+- 若某句无实体或关系，对应列表可为空，但必须保留 entities 和 relations 两个 key。
 
-文本：
-{sentence}
-
-请以JSON格式返回结果：
+【示例 1】
+输入文本：急性胰腺炎患者常出现腹痛、恶心呕吐。该病可采用禁食、补液等治疗，并需进行血淀粉酶检查。
+输出：
 {{
-    "entities": [
-        {{"name": "实体名称", "type": "实体类型", "description": "描述"}}
-    ],
-    "relations": [
-        {{"subject": "主体实体", "predicate": "关系类型", "object": "客体实体"}}
-    ]
+  "entities": [
+    {{"name": "急性胰腺炎", "type": "Disease", "description": "疾病"}},
+    {{"name": "腹痛", "type": "Symptom", "description": "症状"}},
+    {{"name": "恶心呕吐", "type": "Symptom", "description": "症状"}},
+    {{"name": "禁食", "type": "Treatment", "description": "治疗方式"}},
+    {{"name": "补液", "type": "Treatment", "description": "治疗方式"}},
+    {{"name": "血淀粉酶检查", "type": "Examination", "description": "检查"}}
+  ],
+  "relations": [
+    {{"subject": "急性胰腺炎", "predicate": "HAS_SYMPTOM", "object": "腹痛"}},
+    {{"subject": "急性胰腺炎", "predicate": "HAS_SYMPTOM", "object": "恶心呕吐"}},
+    {{"subject": "急性胰腺炎", "predicate": "TREATED_BY", "object": "禁食"}},
+    {{"subject": "急性胰腺炎", "predicate": "TREATED_BY", "object": "补液"}},
+    {{"subject": "急性胰腺炎", "predicate": "REQUIRES_EXAM", "object": "血淀粉酶检查"}}
+  ]
 }}
 
-注意：
-1. 提取所有相关的医学实体
-2. 确保关系的主体和客体都在实体列表中
-3. 如果文本中没有明确的实体或关系，返回空列表
+【示例 2】
+输入文本：患者今日一般情况可。
+输出：
+{{"entities": [], "relations": []}}
+
+【待提取文本】
+{sentence}
+
+请仅输出上述格式的 JSON，不要输出其他说明。
 """
 
         try:
@@ -268,7 +377,7 @@ class KnowledgeGraphBuilder:
                 {"role": "user", "content": prompt}
             ]
 
-            response = self.llm.chat(messages, temperature=0.3, max_tokens=4096)
+            response = self.llm.chat(messages, temperature=0, max_tokens=4096)
             logger.debug(f"LLM原始响应: {response}")
 
             import json

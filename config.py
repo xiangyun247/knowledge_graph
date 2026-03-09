@@ -83,7 +83,7 @@ MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "knowledge_graph")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "knowledge_graph_system")
 
 # 验证 MySQL 密码
 if not MYSQL_PASSWORD:
@@ -137,6 +137,9 @@ GRAPH_WEIGHT = float(os.getenv("GRAPH_WEIGHT", "0.5"))
 
 # 最小相关性阈值
 MIN_RELEVANCE_SCORE = float(os.getenv("MIN_RELEVANCE_SCORE", "0.6"))
+
+# Hybrid RAG：RRF（Reciprocal Rank Fusion）常数，常用 60
+HYBRID_RAG_RRF_K = int(os.getenv("HYBRID_RAG_RRF_K", "60"))
 
 # ==================== 应用配置 ====================
 

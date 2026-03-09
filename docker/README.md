@@ -6,8 +6,10 @@
 docker/
 ├── Dockerfile.backend              # 后端服务 Dockerfile
 ├── Dockerfile.celery               # Celery Worker Dockerfile
+├── Dockerfile.frontend              # 前端构建参考（实际使用前端项目内 docker/Dockerfile）
 ├── Dockerfile.hadoop-python        # Hadoop NameNode（带 Python 支持）
 ├── Dockerfile.hadoop-datanode-python  # Hadoop DataNode（带 Python 支持）
+├── nginx.conf                      # Nginx 配置参考（实际使用前端项目内 docker/nginx.conf）
 └── .dockerignore                   # Docker 构建忽略文件
 ```
 
@@ -61,11 +63,20 @@ docker build -f docker/Dockerfile.hadoop-datanode-python -t hadoop-datanode-pyth
 
 **注意：** 使用 `docker-compose up` 时会自动构建这些镜像。
 
+### 前端服务
+
+- 前端需单独仓库（如 `vue_test_style` 或 `knowledge_gragh_frontend`），且需包含 `docker/Dockerfile` 与 `docker/nginx.conf`
+- 将前端项目放到与 `knowledge_gragh` 同级目录，或设置 `FRONTEND_CONTEXT` 指向前端路径
+- 启动后访问 `http://localhost` 即可打开前端，`/api` 自动反代到 backend:5001
+
 ### 使用 Docker Compose（推荐）
 
 ```bash
-# 启动所有服务
+# 启动所有服务（含 frontend，需先放置前端项目）
 docker-compose up -d
+
+# 仅启动后端与数据库（不含 frontend）
+docker-compose up -d backend mysql neo4j redis
 
 # 查看服务状态
 docker-compose ps

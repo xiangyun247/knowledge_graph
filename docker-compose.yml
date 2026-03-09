@@ -238,6 +238,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Vue 前端（Nginx 托管静态文件，/api 反代到 backend）
+  # 构建前请将前端项目放到与 knowledge_gragh 同级目录，或设置 FRONTEND_CONTEXT 指向前端路径
+  frontend:
+    build:
+      context: ${FRONTEND_CONTEXT:-../vue_test_style}
+      dockerfile: docker/Dockerfile
+    container_name: kg-frontend
+    ports:
+      - "80:80"
+    networks:
+      - kg-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   # Celery Worker
   celery-worker:
     build:

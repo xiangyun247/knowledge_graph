@@ -24,6 +24,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Request
+
+from backend.auth import require_roles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -85,7 +87,7 @@ def _collect_celery_debug_info() -> Dict[str, Any]:
     }
 
 
-@router.post("/upload/batch")
+@router.post("/upload/batch", dependencies=[require_roles("admin", "doctor")])
 async def batch_upload_files(files: List[UploadFile] = File(...)):
     """
     批量上传 PDF 文件到本地并同步上传到 HDFS
@@ -131,9 +133,13 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
 
             if is_pdf:
                 try:
-                    import pdfplumber
-                    with pdfplumber.open(local_path) as pdf:
-                        pdf_text = "\n\n".join([page.extract_text() or "" for page in pdf.pages])
+                    from backend.pdf_extract import extract_pdf_text
+                    from backend.text_clean import clean_medical_text
+                    raw = extract_pdf_text(local_path).strip()
+                    if raw and not raw.startswith("ERROR:"):
+                        pdf_text = clean_medical_text(raw)
+                    else:
+                        pdf_text = raw or ""
                     logger.info(f"成功提取PDF文本，文件ID: {file_id}, 文本长度: {len(pdf_text)}")
                 except Exception as e:
                     logger.error(f"PDF提取失败，文件ID: {file_id}, 错误: {e}")
@@ -142,6 +148,9 @@ async def batch_upload_files(files: List[UploadFile] = File(...)):
                 try:
                     with open(local_path, "r", encoding="utf-8") as f:
                         pdf_text = f.read()
+                    if pdf_text:
+                        from backend.text_clean import clean_medical_text
+                        pdf_text = clean_medical_text(pdf_text.strip())
                     logger.info(f"成功读取TXT文本，文件ID: {file_id}, 文本长度: {len(pdf_text)}")
                 except Exception as e:
                     logger.error(f"TXT读取失败，文件ID: {file_id}, 错误: {e}")
@@ -239,23 +248,50 @@ def _run_hadoop_and_celery_in_background(
             tasks[task_id]["progress"] = 50
             tasks[task_id]["current_processing"] = "准备并行构建"
 
+            # 1）默认：只用「上传时本地提取」的 pdf_text，不依赖 Hadoop
             extracted_texts = {}
             for file_id in file_ids:
                 file_info = uploaded_files.get(file_id, {})
                 text = (file_info.get("pdf_text") or "").strip()
-                if text:
+                if text and not (isinstance(text, str) and text.startswith("ERROR:")):
                     extracted_texts[file_id] = text
 
-            hadoop_result = {
-                "success": True,
-                "final_output": "/knowledge_graph/processed/text_chunk",
-                "stages": {
-                    "pdf_extract": {"success": True, "output_path": "/knowledge_graph/processed/pdf_extract"},
-                    "text_clean": {"success": True, "output_path": "/knowledge_graph/processed/text_clean"},
-                    "text_chunk": {"success": True, "output_path": "/knowledge_graph/processed/text_chunk"},
-                },
-                "extracted_texts": extracted_texts,
-            }
+            hadoop_result = {"success": True, "extracted_texts": extracted_texts}
+
+            # 2）折中：仅对「只上了 HDFS、未在本地做提取」的文件，当 use_hadoop=True 时走 MapReduce
+            hdfs_only_ids = [fid for fid in file_ids if fid not in extracted_texts]
+            if use_hadoop and hdfs_only_ids:
+                try:
+                    hadoop_svc = get_hadoop_service()
+                    tasks[task_id]["message"] = "对未本地提取的文件运行 MapReduce 提取→清洗→分块"
+                    tasks[task_id]["current_processing"] = "MapReduce 预处理中"
+                    mr_result = hadoop_svc.process_files_with_hadoop(hdfs_only_ids)
+                    if mr_result.get("success") and mr_result.get("stages", {}).get("text_clean", {}).get("output_path"):
+                        text_clean_path = mr_result["stages"]["text_clean"]["output_path"]
+                        hdfs_texts = hadoop_svc.read_extracted_text_from_hdfs(text_clean_path)
+                        for fid, txt in hdfs_texts.items():
+                            if fid in file_ids and fid not in extracted_texts:
+                                extracted_texts[fid] = txt
+                                if fid in uploaded_files:
+                                    uploaded_files[fid]["pdf_text"] = txt
+                        hadoop_result = {
+                            "success": True,
+                            "used_mapreduce": True,
+                            "stages": mr_result.get("stages"),
+                            "extracted_texts": extracted_texts,
+                        }
+                        logger.info("MapReduce 拉回 %d 个文件文本，合并后共 %d 个文件", len(hdfs_texts), len(extracted_texts))
+                    else:
+                        hadoop_result["used_mapreduce"] = False
+                        hadoop_result["mapreduce_error"] = mr_result.get("error", "MapReduce 未返回成功或缺少 text_clean 输出路径")
+                        logger.warning("MapReduce 未成功，仅使用已有本地提取文本: %s", hadoop_result.get("mapreduce_error"))
+                except Exception as mr_err:
+                    hadoop_result["used_mapreduce"] = False
+                    hadoop_result["mapreduce_error"] = str(mr_err)
+                    logger.warning("MapReduce 执行或拉取失败，仅使用已有本地提取文本: %s", mr_err)
+            else:
+                hadoop_result["used_mapreduce"] = False
+
             tasks[task_id]["hadoop_result"] = hadoop_result
 
             if not extracted_texts:
@@ -392,7 +428,7 @@ def _run_hadoop_and_celery_in_background(
                 tasks[task_id]["progress"] = 100
 
 
-@router.post("/build/batch")
+@router.post("/build/batch", dependencies=[require_roles("admin", "doctor")])
 async def batch_build_kg(req: Request, request: BatchBuildRequest):
     """
     批量触发并行构建知识图谱 (异步任务)。

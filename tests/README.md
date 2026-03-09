@@ -36,8 +36,17 @@
 ## 运行测试
 
 ```bash
-# 运行所有测试
+# 安装测试依赖
+pip install pytest pytest-cov
+
+# 运行所有测试（无需启动服务，使用 TestClient）
 pytest tests/
+
+# 运行核心 API 测试（健康检查、认证）
+pytest tests/test_health.py tests/test_auth_api.py -v
+
+# 带覆盖率报告
+pytest tests/ -v --cov=backend --cov-report=html --cov-report=term
 
 # 运行特定测试
 pytest tests/test_api.py

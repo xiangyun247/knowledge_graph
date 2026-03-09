@@ -18,9 +18,38 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.auth import get_current_user_id
+from backend.auth import get_current_user_id, require_roles
 
 logger = logging.getLogger(__name__)
+
+
+# 统一错误码
+E_OK = "E_OK"
+E_MODEL = "E_MODEL"
+E_AGENT = "E_AGENT"
+E_PATIENT_EDU = "E_PATIENT_EDU"
+E_TWEET = "E_TWEET"
+E_INTERNAL = "E_INTERNAL"
+
+
+def _error_detail(code: str, message: str) -> dict:
+  """构造统一的错误返回体 detail 字段。"""
+  return {"code": code, "message": message}
+
+
+def _log_api_event(user_id: str, api: str, status: str, elapsed: float, **extra):
+  """统一结构化日志，便于后续分析。"""
+  payload = {
+    "api": api,
+    "status": status,
+    "elapsed_ms": int(elapsed * 1000),
+    "user_id": user_id or "",
+  }
+  payload.update(extra or {})
+  try:
+    logger.info(json.dumps(payload, ensure_ascii=False))
+  except Exception:
+    logger.info(payload)
 
 router = APIRouter(prefix="/api", tags=["Agent"])
 
@@ -58,7 +87,7 @@ class ScienceTweetRequest(BaseModel):
     style: str = Field("轻松", description="风格：轻松/严谨/亲切")
 
 
-@router.post("/science-tweet")
+@router.post("/science-tweet", dependencies=[require_roles("admin", "doctor", "patient")])
 async def api_science_tweet(request: Request, req: ScienceTweetRequest):
     """
     生成科普推文。用于「推文版」按钮：将已有问答转化为 1～3 条推文。
@@ -103,7 +132,7 @@ def _history_to_messages(history: list):
     return out
 
 
-@router.post("/agent/query")
+@router.post("/agent/query", dependencies=[require_roles("admin", "doctor", "patient")])
 async def api_agent_query(request: Request, req: AgentQueryRequest):
     """
     使用 LangGraph Agent 进行问答。
@@ -111,15 +140,26 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
     7.1 传入 user_id 供 tools 做文档/图谱权限过滤。
     返回: answer, sources, response, question, processing_time
     """
+    api_path = "/api/agent/query"
+    start = time.time()
     try:
         from backend.agent import run_agent
         from backend.agent_session import get_session_history, append_session_exchange
     except Exception as e:
         err = str(e)[:280]
         logger.warning("Agent 模块导入失败: %s", e)
+        elapsed = time.time() - start
+        _log_api_event(
+          user_id="",
+          api=api_path,
+          status="error",
+          elapsed=elapsed,
+          error=str(e),
+          code=E_AGENT,
+        )
         raise HTTPException(
             status_code=503,
-            detail=f"Agent 服务暂不可用，请检查 DEEPSEEK_API_KEY 及依赖（langgraph、langchain-openai 等）。错误: {err}",
+            detail=_error_detail(E_AGENT, f"Agent 服务暂不可用，请检查 DEEPSEEK_API_KEY 及依赖（langgraph、langchain-openai 等）。错误: {err}"),
         )
 
     user_id = get_current_user_id(request)
@@ -151,6 +191,14 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
                 answer = "\n".join(lines)
             if req.session_id and req.session_id.strip():
                 append_session_exchange(req.session_id, req.question, answer)
+            _log_api_event(
+              user_id=user_id,
+              api=api_path,
+              status="ok",
+              elapsed=elapsed,
+              mode="science_tweet",
+              model=req.model or "",
+            )
             return {
                 "question": req.question,
                 "answer": answer,
@@ -162,7 +210,18 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
             }
         except Exception as e:
             logger.exception("科普推文生成失败")
-            raise HTTPException(status_code=500, detail=str(e))
+            elapsed = time.time() - start
+            _log_api_event(
+              user_id=user_id,
+              api=api_path,
+              status="error",
+              elapsed=elapsed,
+              mode="science_tweet",
+              model=req.model or "",
+              error=str(e),
+              code=E_TWEET,
+            )
+            raise HTTPException(status_code=500, detail=_error_detail(E_TWEET, str(e)))
 
     # intent=patient_education：直接调用患者教育生成，返回结构化内容
     if (req.intent or "").strip().lower() == "patient_education":
@@ -192,6 +251,14 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
                 answer = "\n".join(lines)
             if req.session_id and req.session_id.strip():
                 append_session_exchange(req.session_id, req.question, answer)
+            _log_api_event(
+              user_id=user_id,
+              api=api_path,
+              status="ok",
+              elapsed=elapsed,
+              mode="patient_education",
+              model=req.model or "",
+            )
             return {
                 "question": req.question,
                 "answer": answer,
@@ -203,7 +270,18 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
             }
         except Exception as e:
             logger.exception("患者教育生成失败")
-            raise HTTPException(status_code=500, detail=str(e))
+            elapsed = time.time() - start
+            _log_api_event(
+              user_id=user_id,
+              api=api_path,
+              status="error",
+              elapsed=elapsed,
+              mode="patient_education",
+              model=req.model or "",
+              error=str(e),
+              code=E_PATIENT_EDU,
+            )
+            raise HTTPException(status_code=500, detail=_error_detail(E_PATIENT_EDU, str(e)))
 
     initial_messages = None
     if req.session_id and req.session_id.strip():
@@ -233,7 +311,18 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
         )
     except Exception as e:
         logger.exception("run_agent 执行失败")
-        raise HTTPException(status_code=500, detail=str(e))
+        elapsed = time.time() - start
+        _log_api_event(
+          user_id=user_id,
+          api=api_path,
+          status="error",
+          elapsed=elapsed,
+          mode="agent",
+          model=req.model or "",
+          error=str(e),
+          code=E_AGENT,
+        )
+        raise HTTPException(status_code=500, detail=_error_detail(E_AGENT, str(e)))
 
     elapsed = time.time() - start
     answer = out.get("answer", "")
@@ -241,6 +330,14 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
     if req.session_id and req.session_id.strip():
         append_session_exchange(req.session_id, req.question, answer)
 
+    _log_api_event(
+      user_id=user_id,
+      api=api_path,
+      status="ok",
+      elapsed=elapsed,
+      mode="agent",
+      model=req.model or "",
+    )
     return {
         "question": req.question,
         "answer": answer,
@@ -251,7 +348,7 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
     }
 
 
-@router.post("/agent/query/stream")
+@router.post("/agent/query/stream", dependencies=[require_roles("admin", "doctor", "patient")])
 async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
     """
     6.2 流式问答：SSE 推送 chunk（打字机）与 done（answer+sources）。

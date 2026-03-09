@@ -283,8 +283,13 @@ def run_agent(
             "trace": trace,
         }
     finally:
+        # 注意：在流式场景下，生成器可能在不同的 Context 中结束，直接 reset 可能抛 ValueError。
+        # 这里捕获并忽略该错误，避免影响正常回答流程。
         if token is not None:
-            _llm_config_ctx.reset(token)
+            try:
+                _llm_config_ctx.reset(token)
+            except ValueError:
+                logger.warning("llm_model_config reset in different Context (stream), ignore this error")
 
 
 def run_agent_stream(
@@ -359,5 +364,9 @@ def run_agent_stream(
             "trace": trace,
         }
     finally:
+        # 与非流式接口类似，流式场景下 reset 也可能在不同 Context 中触发，这里做保护性捕获
         if token is not None:
-            _llm_config_ctx.reset(token)
+            try:
+                _llm_config_ctx.reset(token)
+            except ValueError:
+                logger.warning("llm_model_config reset in different Context (stream), ignore this error")

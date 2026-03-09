@@ -9,6 +9,7 @@ torch>=2.0.0  # sentence-transformers 依赖
 python-multipart==0.0.6  # 文件上传
 python-dotenv==1.0.0
 pdfplumber==0.10.3
+pymupdf>=1.23.0  # PDF 页渲染为图像，供扫描版 OCR 使用
 mysql-connector-python==8.2.0  # MySQL数据库连接
 sqlalchemy==2.0.23  # SQL ORM框架
 pymysql==1.1.2
@@ -24,3 +25,9 @@ edge-tts>=6.1.0  # 文本转语音
 openai-whisper>=20231117  # 语音转文本
 paddlepaddle>=2.5.0  # OCR（CPU 版；GPU 需单独安装）
 paddleocr>=2.7.0  # 光学字符识别
+PyJWT>=2.8.0
+bcrypt>=4.0.0
+slowapi>=0.1.9
+# 测试
+pytest>=7.0.0
+pytest-cov>=4.0.0

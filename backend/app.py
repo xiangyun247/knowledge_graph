@@ -7,10 +7,15 @@
 import os
 import sys
 import tempfile
+import logging
 # 将项目根目录添加到Python路径中
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 sys.path.insert(0, PROJECT_ROOT)
+
+# 关闭 ChromaDB 遥测并静默其日志（避免 posthog capture 报错刷屏）
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -28,8 +33,18 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from db.mysql_client import get_mysql_client
-from backend.auth import get_current_user_id
-import hashlib
+from backend.text_clean import clean_medical_text
+from backend.auth import (
+    get_current_user_id,
+    get_current_user,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    require_roles,
+)
+from backend.auth import ACCESS_EXPIRES_SEC
+from backend.auth import _validate_jwt_secret_for_production
+import bcrypt
 from backend.patient_education_images import generate_section_images_glm
 
 # 尝试导入 Neo4j 客户端（可选，用于实体搜索）
@@ -54,13 +69,36 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# 配置CORS
+# 限流器（登录等敏感接口）
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+except ImportError:
+    # slowapi 未安装时使用空实现
+    class _NoOpLimiter:
+        def limit(self, *args, **kwargs):
+            def decorator(f):
+                return f
+            return decorator
+    limiter = _NoOpLimiter()
+
+# 配置CORS：生产环境通过 CORS_ORIGINS 限制来源，开发默认允许常见本地端口
+_cors_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8080,http://127.0.0.1:8080,http://localhost:5002,http://127.0.0.1:5002,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
+).strip()
+CORS_ORIGINS_LIST = [o.strip() for o in _cors_origins.split(",") if o.strip()] if _cors_origins != "*" else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 允许所有来源
+    allow_origins=CORS_ORIGINS_LIST,
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有方法
-    allow_headers=["*"],  # 允许所有请求头
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
 )
 
 # 初始化日志配置
@@ -71,6 +109,80 @@ logger.add(
     retention="7 days",
     encoding="utf-8"
 )
+
+
+@app.on_event("startup")
+async def _startup_security_check():
+    """启动时安全校验：生产环境 JWT_SECRET 必须正确配置。"""
+    try:
+        _validate_jwt_secret_for_production()
+    except ValueError as e:
+        logger.error(str(e))
+        raise
+
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup():
+    """优雅关闭：释放 MySQL、Neo4j 等连接。"""
+    logger.info("正在关闭服务，释放资源...")
+    try:
+        if mysql_client and hasattr(mysql_client, "disconnect"):
+            mysql_client.disconnect()
+            logger.info("MySQL 连接已关闭")
+    except Exception as e:
+        logger.warning(f"关闭 MySQL 连接时异常: {e}")
+    try:
+        if neo4j_client and hasattr(neo4j_client, "close"):
+            neo4j_client.close()
+            logger.info("Neo4j 连接已关闭")
+    except Exception as e:
+        logger.warning(f"关闭 Neo4j 连接时异常: {e}")
+    logger.info("服务已优雅关闭")
+
+# ==================== 统一错误码与可观测性辅助 ====================
+
+E_OK = "E_OK"
+E_DB = "E_DB"
+E_GRAPH = "E_GRAPH"
+E_KB = "E_KB"
+E_MODEL = "E_MODEL"
+E_HEALTH = "E_HEALTH"
+E_INTERNAL = "E_INTERNAL"
+
+
+def error_detail(code: str, message: str) -> dict:
+    """构造统一错误返回体。"""
+    return {"code": code, "message": message}
+
+
+def _sanitize_user_id_for_log(user_id: str) -> str:
+    """生产环境下对 user_id 脱敏，避免日志泄露用户标识。"""
+    if os.getenv("ENVIRONMENT", "development").lower() != "production":
+        return user_id or ""
+    if not user_id:
+        return ""
+    # 生产环境：仅保留前 4 位 + 后 4 位，中间用 *** 替代
+    uid = str(user_id)
+    if len(uid) <= 12:
+        return uid[:4] + "***" if len(uid) > 4 else "***"
+    return uid[:4] + "***" + uid[-4:]
+
+
+def log_api_event(user_id: str, api: str, status: str, elapsed_ms: int, **extra: Any) -> None:
+    """统一结构化日志，便于后续分析。生产环境对 user_id 脱敏。"""
+    payload: Dict[str, Any] = {
+        "api": api,
+        "status": status,
+        "elapsed_ms": int(elapsed_ms),
+        "user_id": _sanitize_user_id_for_log(user_id or ""),
+    }
+    if extra:
+        payload.update(extra)
+    try:
+        logger.info(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        logger.info(payload)
+
 
 # 初始化MySQL客户端（延迟加载）
 mysql_client = None
@@ -114,6 +226,22 @@ def _ensure_users_table() -> None:
     if not has_col:
         mysql_client.execute_update(
             "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL AFTER email"
+        )
+
+    # 添加 role 列（JWT 角色权限）
+    try:
+        rows_role = mysql_client.execute_query(
+            "SHOW COLUMNS FROM users LIKE :col",
+            {"col": "role"},
+        )
+        has_role = bool(rows_role)
+    except Exception as e:
+        from loguru import logger as _logger
+        _logger.debug(f"check users.role column failed: {e}")
+        has_role = False
+    if not has_role:
+        mysql_client.execute_update(
+            "ALTER TABLE users ADD COLUMN role VARCHAR(32) NOT NULL DEFAULT 'patient' AFTER email"
         )
 
     # 兼容旧表结构：将原有 password 列改为可为空，避免 NOT NULL 无默认值导致插入失败
@@ -176,24 +304,43 @@ def _ensure_patient_education_table() -> None:
 
 
 def _hash_password(password: str) -> str:
-    """使用 SHA256 做简单加密（示例项目，非生产级别）。"""
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    """使用 bcrypt 加密（企业级安全）。"""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 
 def _verify_password(password: str, password_hash: str) -> bool:
-    return _hash_password(password) == (password_hash or "")
+    """验证密码，兼容旧 SHA256 哈希（64 位十六进制）以便迁移。"""
+    if not password_hash:
+        return False
+    ph = password_hash.strip()
+    # bcrypt 格式：$2b$12$...
+    if ph.startswith("$2"):
+        try:
+            return bcrypt.checkpw(password.encode("utf-8"), ph.encode("utf-8"))
+        except Exception:
+            return False
+    # 兼容旧 SHA256 哈希（64 位十六进制）
+    if len(ph) == 64 and all(c in "0123456789abcdef" for c in ph.lower()):
+        import hashlib
+        return hashlib.sha256(password.encode("utf-8")).hexdigest() == ph
+    return False
 
 
 def _get_user_by_username(username: str):
-    """根据用户名查询用户记录。"""
+    """根据用户名查询用户记录（含 role）。"""
     if not mysql_client:
         return None
     _ensure_users_table()
     rows = mysql_client.execute_query(
-        "SELECT user_id, username, email, password_hash FROM users WHERE username = :username",
+        "SELECT user_id, username, email, password_hash, role FROM users WHERE username = :username",
         {"username": username},
     )
-    return rows[0] if rows else None
+    if rows:
+        row = dict(rows[0])
+        if "role" not in row or row["role"] is None:
+            row["role"] = "patient"
+        return row
+    return None
 
 
 # 定义任务状态枚举
@@ -393,6 +540,75 @@ async def home_overview(request: Request):
     }
 
 
+@app.get("/api/health", tags=["系统"])
+async def health_check() -> Dict[str, Any]:
+    """
+    系统健康检查：
+    - MySQL：基础连通性
+    - Neo4j：图数据库连通性
+    - Chroma：向量库初始化
+    - LLM：DeepSeek API Key 是否配置（不强制实际请求）
+    """
+    start = datetime.now()
+    results: Dict[str, Any] = {}
+
+    # MySQL
+    try:
+        ok = bool(mysql_client)
+        if ok:
+            mysql_client.execute_query("SELECT 1")
+        results["mysql"] = {"status": "ok" if ok else "disabled"}
+    except Exception as e:
+        results["mysql"] = {"status": "error", "message": str(e)}
+
+    # Neo4j
+    try:
+        if neo4j_client and neo4j_client.verify_connection():
+            results["neo4j"] = {"status": "ok"}
+        else:
+            results["neo4j"] = {"status": "disabled"}
+    except Exception as e:
+        results["neo4j"] = {"status": "error", "message": str(e)}
+
+    # Chroma
+    try:
+        store = _get_chroma_store()
+        _ = store.count()
+        results["chroma"] = {"status": "ok"}
+    except Exception as e:
+        results["chroma"] = {"status": "error", "message": str(e)}
+
+    # LLM（仅检查配置存在，不强制真实请求）
+    try:
+        from llm.models_config import get_default_model_id, get_llm_config
+
+        mid = get_default_model_id()
+        cfg = get_llm_config(mid)
+        if cfg:
+            results["llm"] = {"status": "ok", "default_model": mid}
+        else:
+            results["llm"] = {"status": "error", "message": "未找到可用模型配置"}
+    except Exception as e:
+        results["llm"] = {"status": "error", "message": str(e)}
+
+    elapsed_ms = int((datetime.now() - start).total_seconds() * 1000)
+    overall_ok = all(v.get("status") in ("ok", "disabled") for v in results.values())
+    status = "ok" if overall_ok else "degraded"
+
+    log_api_event(
+        user_id="",
+        api="/api/health",
+        status=status,
+        elapsed_ms=elapsed_ms,
+    )
+
+    return {
+        "status": status,
+        "elapsed_ms": elapsed_ms,
+        "components": results,
+    }
+
+
 # =============== 数据模板下载（内联注册，确保与 /api/kb 同进程生效） ===============
 
 _TEMPLATE_DISEASE_JSON = json.dumps({
@@ -468,17 +684,19 @@ async def register_user(body: RegisterRequest):
     _ensure_users_table()
     user_id = str(uuid.uuid4())
     password_hash = _hash_password(body.password)
+    role = "patient"
 
     mysql_client.execute_update(
         """
-        INSERT INTO users (user_id, username, email, password_hash)
-        VALUES (:user_id, :username, :email, :password_hash)
+        INSERT INTO users (user_id, username, email, password_hash, role)
+        VALUES (:user_id, :username, :email, :password_hash, :role)
         """,
         {
             "user_id": user_id,
             "username": username,
             "email": email,
             "password_hash": password_hash,
+            "role": role,
         },
     )
 
@@ -492,9 +710,66 @@ async def register_user(body: RegisterRequest):
     }
 
 
+class RefreshTokenRequest(BaseModel):
+    """刷新 Token 请求体"""
+    refresh_token: str = Field(..., description="Refresh Token")
+
+
+class UpdateRoleRequest(BaseModel):
+    """个人中心修改身份（角色）请求体"""
+    role: str = Field(..., description="新角色：admin / doctor / patient")
+
+
+@app.put("/api/user/role", tags=["用户"])
+async def update_user_role(request: Request, body: UpdateRoleRequest):
+    """个人中心自助修改身份（角色），需登录。成功后返回新 token 与用户信息。"""
+    if not mysql_client:
+        raise HTTPException(status_code=500, detail="修改角色依赖 MySQL，请先配置数据库")
+
+    user_id, _ = get_current_user(request)
+    if user_id == "default_user" or not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+
+    role = (body.role or "").strip().lower()
+    if role not in ("admin", "doctor", "patient"):
+        raise HTTPException(status_code=400, detail="角色必须是 admin、doctor 或 patient 之一")
+
+    _ensure_users_table()
+    rows = mysql_client.execute_query(
+        "SELECT user_id, username, email FROM users WHERE user_id = :user_id",
+        {"user_id": user_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    mysql_client.execute_update(
+        "UPDATE users SET role = :role WHERE user_id = :user_id",
+        {"role": role, "user_id": user_id},
+    )
+
+    access_token = create_access_token(user_id, role)
+    refresh_token = create_refresh_token(user_id, role)
+    user_row = dict(rows[0])
+
+    return {
+        "status": "success",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_EXPIRES_SEC,
+        "user": {
+            "id": user_row.get("user_id"),
+            "username": user_row.get("username"),
+            "email": user_row.get("email"),
+            "role": role,
+        },
+    }
+
+
 @app.post("/api/auth/login", tags=["认证"])
-async def login_user(body: LoginRequest):
-    """用户名/密码登录，返回简单 token 与用户信息。"""
+@limiter.limit(os.getenv("RATE_LIMIT_LOGIN", "5/minute"))
+async def login_user(request: Request, body: LoginRequest):
+    """用户名/密码登录，返回 JWT access_token、refresh_token 与用户信息。"""
     if not mysql_client:
         raise HTTPException(status_code=500, detail="登录功能依赖 MySQL，请先配置数据库")
 
@@ -503,18 +778,52 @@ async def login_user(body: LoginRequest):
     if not user or not _verify_password(body.password, user.get("password_hash")):
         raise HTTPException(status_code=400, detail="用户名或密码错误")
 
-    # 示例项目中 token 仅作为前端会话标记，不做服务端校验
-    token = f"mock-token-{uuid.uuid4()}"
+    user_id = user.get("user_id")
+    role = user.get("role") or "patient"
+    access_token = create_access_token(user_id, role)
+    refresh_token = create_refresh_token(user_id, role)
 
     return {
         "status": "success",
-        "token": token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_EXPIRES_SEC,
         "user": {
-            "id": user.get("user_id"),
+            "id": user_id,
             "username": user.get("username"),
             "email": user.get("email"),
-            "role": "user",
+            "role": role,
         },
+    }
+
+
+@app.post("/api/auth/refresh", tags=["认证"])
+async def refresh_token(body: RefreshTokenRequest):
+    """使用 refresh_token 换取新的 access_token 与 refresh_token。"""
+    payload = decode_token(body.refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "E_TOKEN_INVALID", "message": "无效或过期的 Refresh Token"},
+        )
+    user_id = payload.get("sub")
+    role = payload.get("role") or "patient"
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "E_TOKEN_INVALID", "message": "Token 中缺少用户信息"},
+        )
+
+    access_token = create_access_token(user_id, role)
+    new_refresh_token = create_refresh_token(user_id, role)
+
+    return {
+        "status": "success",
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_EXPIRES_SEC,
     }
 
 
@@ -523,7 +832,7 @@ class BuildKGFromFileRequest(BaseModel):
     file_id: str = Field(..., description="已上传文件的ID")
 
 # 文件上传API
-@app.post("/api/upload", tags=["文件上传"])
+@app.post("/api/upload", tags=["文件上传"], dependencies=[require_roles("admin", "doctor")])
 async def upload_file(file: UploadFile = File(...)):
     """
     上传文件
@@ -548,9 +857,12 @@ async def upload_file(file: UploadFile = File(...)):
         is_txt = file_ext.lower() == ".txt"
         if is_pdf:
             try:
-                import pdfplumber
-                with pdfplumber.open(file_path) as pdf:
-                    pdf_text = "\n\n".join([p.extract_text() or "" for p in pdf.pages])
+                from backend.pdf_extract import extract_pdf_text
+                raw = extract_pdf_text(file_path).strip()
+                if raw and not raw.startswith("ERROR:"):
+                    pdf_text = clean_medical_text(raw)
+                else:
+                    pdf_text = raw or ""
                 logger.info(f"单文件上传已提取PDF文本: {file_id}, 长度: {len(pdf_text)}")
             except Exception as e:
                 logger.warning(f"单文件上传PDF提取失败: {file_id}, {e}")
@@ -559,6 +871,8 @@ async def upload_file(file: UploadFile = File(...)):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     pdf_text = f.read()
+                if pdf_text:
+                    pdf_text = clean_medical_text(pdf_text.strip())
                 logger.info(f"单文件上传已读取TXT文本: {file_id}, 长度: {len(pdf_text)}")
             except Exception as e:
                 logger.warning(f"单文件上传TXT读取失败: {file_id}, {e}")
@@ -643,15 +957,15 @@ def _extract_text_for_ingest(
 
     if st == "pdf":
         if pdf_text and pdf_text.strip() and not pdf_text.strip().startswith("ERROR:"):
-            return (pdf_text.strip(), "pdf")
+            t = pdf_text.strip()
+            return (clean_medical_text(t), "pdf")
         if path and os.path.isfile(path):
             try:
-                import pdfplumber
-                with pdfplumber.open(path) as pdf:
-                    t = "\n\n".join([(p.extract_text() or "") for p in pdf.pages])
-                return (t.strip(), "pdf")
+                from backend.pdf_extract import extract_pdf_text
+                t = extract_pdf_text(path).strip()
+                return (clean_medical_text(t), "pdf") if t else ("", "pdf")
             except Exception as e:
-                logger.warning(f"pdfplumber 提取 PDF 失败 path={path}: {e}")
+                logger.warning(f"PDF 增强提取失败 path={path}: {e}")
         return ("", "pdf")
 
     if st == "json":
@@ -676,18 +990,21 @@ def _extract_text_for_ingest(
                 text = data
             else:
                 text = json.dumps(data, ensure_ascii=False)
-            return (str(text).strip(), "json")
+            text_out = str(text).strip()
+            return (clean_medical_text(text_out), "json") if text_out else ("", "json")
         except Exception:
-            return (raw.strip(), "json")
+            return (raw.strip(), "json") if raw else ("", "json")
     # txt 及其他
     if path and os.path.isfile(path):
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
-                return (f.read().strip(), st)
+                t = f.read().strip()
+            return (clean_medical_text(t), st) if t else ("", st)
         except Exception as e:
             logger.warning(f"读取文本文件失败 path={path}: {e}")
     if content:
-        return (str(content).strip(), st)
+        t = str(content).strip()
+        return (clean_medical_text(t), st) if t else ("", st)
     return ("", st)
 
 
@@ -793,7 +1110,7 @@ class CreateKbBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=128, description="知识库名称")
 
 
-@app.post("/api/kb/bases", tags=["文档知识库"])
+@app.post("/api/kb/bases", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor")])
 async def create_kb_base(request: Request, body: CreateKbBody):
     """
     创建新知识库。优先写入 MySQL，无 MySQL 时写内存。返回：{ status, data: { id, name } }。
@@ -827,7 +1144,7 @@ class RenameKbBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=128, description="新名称")
 
 
-@app.patch("/api/kb/bases/{kb_id}", tags=["文档知识库"])
+@app.patch("/api/kb/bases/{kb_id}", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor")])
 async def rename_kb_base(request: Request, kb_id: str, body: RenameKbBody):
     """
     重命名知识库。默认知识库（id=default）不可重命名。优先更新 MySQL，无 MySQL 时更新内存。
@@ -857,7 +1174,7 @@ async def rename_kb_base(request: Request, kb_id: str, body: RenameKbBody):
     return {"status": "success", "data": {"id": kb_id, "name": name}}
 
 
-@app.post("/api/kb/documents/ingest", tags=["文档知识库"])
+@app.post("/api/kb/documents/ingest", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor")])
 async def ingest_document(
     request: Request,
     file: Optional[UploadFile] = File(None),
@@ -999,7 +1316,7 @@ class KbAskBody(BaseModel):
     model: Optional[str] = Field(None, description="LLM 模型 id，与 /api/llm/models 一致，如 deepseek-chat")
 
 
-@app.post("/api/kb/ask", tags=["文档知识库"])
+@app.post("/api/kb/ask", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def kb_ask(request: Request, body: KbAskBody):
     """
     基于知识库文档进行问答：
@@ -1127,7 +1444,7 @@ async def list_documents(
         raise HTTPException(status_code=500, detail=f"文档列表失败: {str(e)}")
 
 
-@app.delete("/api/kb/documents/{doc_id}", tags=["文档知识库"])
+@app.delete("/api/kb/documents/{doc_id}", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor")])
 async def delete_document(request: Request, doc_id: str):
     """
     按 doc_id 删除文档：7.1 仅能删除当前用户自己的 chunk；按 doc_id+user_id 条件删除。
@@ -1155,7 +1472,7 @@ class ReindexRequest(BaseModel):
     chunk_overlap: int = Field(100, ge=0, le=2000)
 
 
-@app.post("/api/kb/documents/reindex", tags=["文档知识库"])
+@app.post("/api/kb/documents/reindex", tags=["文档知识库"], dependencies=[require_roles("admin", "doctor")])
 async def reindex_document(request: Request, body: ReindexRequest):
     """
     重索引：7.1 先校验 doc 归属当前用户，再按 doc_id 删除旧 chunk，从 uploaded_files 重新入库。
@@ -1225,7 +1542,7 @@ async def reindex_document(request: Request, body: ReindexRequest):
 
 
 # 从文件生成知识图谱API
-@app.post("/api/kg/build", tags=["知识图谱构建"])
+@app.post("/api/kg/build", tags=["知识图谱构建"], dependencies=[require_roles("admin", "doctor")])
 async def build_kg_from_file(req: Request, body: BuildKGFromFileRequest):
     """
     从上传的文件生成知识图谱（异步）：真实提取正文（含 PDF）+ kg.builder 构建图谱。
@@ -1570,7 +1887,7 @@ async def get_history_stats():
         raise HTTPException(status_code=500, detail=f"获取历史记录统计失败: {str(e)}")
 
 
-@app.post("/api/history/save", tags=["历史记录"])
+@app.post("/api/history/save", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def save_history(record: ChatHistoryCreate):
     """
     保存聊天/图谱/上传等历史记录
@@ -1627,7 +1944,7 @@ async def save_history(record: ChatHistoryCreate):
         raise HTTPException(status_code=500, detail=f"保存历史记录失败: {str(e)}")
 
 
-@app.put("/api/history/{history_id}/status", tags=["历史记录"])
+@app.put("/api/history/{history_id}/status", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def update_history_status(history_id: str, body: Optional[dict] = Body(None)):
     """更新历史记录状态（前端上传进度/完成/失败时调用）"""
     if not history_id or history_id == "undefined":
@@ -1649,7 +1966,7 @@ async def update_history_status(history_id: str, body: Optional[dict] = Body(Non
 
 
 # 注意：必须先注册字面路径 /clear，再注册 /{history_id}，否则 clear 会被当作 history_id 匹配
-@app.delete("/api/history/clear", tags=["历史记录"])
+@app.delete("/api/history/clear", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def clear_history_all(request: Request):
     """清空历史记录；可按当前用户清空或清空全部（由前端传参或后端策略决定，此处清空全部）"""
     try:
@@ -1668,7 +1985,7 @@ async def clear_history_all(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/history/{history_id}", tags=["历史记录"])
+@app.delete("/api/history/{history_id}", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def delete_history_one(history_id: str):
     """删除单条历史记录"""
     if not history_id or history_id == "undefined":
@@ -1699,7 +2016,7 @@ class BatchDeleteHistoryBody(BaseModel):
     ids: Optional[List[str]] = Field(None, description="历史记录 ID 列表（兼容前端）")
 
 
-@app.post("/api/history/batch-delete", tags=["历史记录"])
+@app.post("/api/history/batch-delete", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def batch_delete_history(body: BatchDeleteHistoryBody):
     """批量删除历史记录"""
     ids = (body.history_ids or body.ids or [])
@@ -1815,7 +2132,7 @@ async def get_graph_list(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/graph/clear", tags=["知识图谱"])
+@app.delete("/api/graph/clear", tags=["知识图谱"], dependencies=[require_roles("admin", "doctor")])
 async def clear_graph_all(request: Request):
     """清空所有图谱：Neo4j 全部删除 + MySQL knowledge_graphs 清空"""
     try:
@@ -1833,7 +2150,7 @@ async def clear_graph_all(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/graph/{graph_id}", tags=["知识图谱"])
+@app.delete("/api/graph/{graph_id}", tags=["知识图谱"], dependencies=[require_roles("admin", "doctor")])
 async def delete_graph_one(request: Request, graph_id: str):
     """按 graph_id 或 data_source（如 file_id）删除单个图谱；仅 MySQL 元数据"""
     if not graph_id or graph_id == "undefined":
@@ -2036,7 +2353,7 @@ async def get_kg_relations(graph_id: str):
 # =============== 患者教育持久化 API（我的患者教育） ===============
 
 
-@app.post("/api/patient-education/generate-images", tags=["患者教育"])
+@app.post("/api/patient-education/generate-images", tags=["患者教育"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def generate_patient_education_images(req: Dict[str, Any]):
   """
   患者教育配图生成接口：
@@ -2059,7 +2376,7 @@ async def generate_patient_education_images(req: Dict[str, Any]):
       raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/patient-education/save", tags=["患者教育"])
+@app.post("/api/patient-education/save", tags=["患者教育"], dependencies=[require_roles("admin", "doctor", "patient")])
 async def save_patient_education(req: PatientEducationSaveRequest, request: Request):
     """
     保存一条患者教育记录到 MySQL。
