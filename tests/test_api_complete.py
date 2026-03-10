@@ -123,11 +123,11 @@ def run_all_tests():
         print(f"❌ 统计信息测试失败: {e}")
         results.append(("统计信息", False))
 
-    # 测试 2: 搜索功能
+    # 测试 2: 搜索功能（entity_type 使用 config.ENTITY_TYPES）
     search_tests = [
         ("Disease", "糖尿病"),
         ("Symptom", "头痛"),
-        ("Drug", "阿司匹林"),
+        ("Medicine", "阿司匹林"),
         ("Department", "内科")
     ]
 

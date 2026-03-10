@@ -42,7 +42,7 @@ TEMPLATE_RELATION_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <relation>
     <source>实体ID或名称</source>
     <target>实体ID或名称</target>
-    <type>关系类型(如: has_symptom, treated_by)</type>
+    <type>关系类型(如: HAS_SYMPTOM, TREATED_BY, REQUIRES_EXAM, HAS_COMPLICATION)</type>
   </relation>
 </knowledge-graph>
 """

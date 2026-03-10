@@ -1,0 +1,239 @@
+{
+  "metric": "llm_score",
+  "overall": {
+    "doc_rag": {
+      "avg": 0.025,
+      "n": 20
+    },
+    "graph_rag": {
+      "avg": 0.325,
+      "n": 20
+    },
+    "hybrid_rag": {
+      "avg": 0.025,
+      "n": 20
+    },
+    "llm_only": {
+      "avg": 0.975,
+      "n": 20
+    }
+  },
+  "by_category": {
+    "cause": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "complication": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "graph_rag": {
+        "avg": 0.3333333333333333,
+        "n": 3
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 3
+      }
+    },
+    "definition": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "department": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 0.5,
+        "n": 1
+      }
+    },
+    "etiology": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "examination": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 2
+      },
+      "graph_rag": {
+        "avg": 0.25,
+        "n": 2
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 2
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 2
+      }
+    },
+    "population": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "prevention": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 3
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 3
+      }
+    },
+    "prognosis": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "severity": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 2
+      },
+      "graph_rag": {
+        "avg": 0.5,
+        "n": 2
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 2
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 2
+      }
+    },
+    "symptom": {
+      "doc_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "graph_rag": {
+        "avg": 0.0,
+        "n": 1
+      },
+      "hybrid_rag": {
+        "avg": 0.5,
+        "n": 1
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 1
+      }
+    },
+    "treatment": {
+      "doc_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "graph_rag": {
+        "avg": 0.16666666666666666,
+        "n": 3
+      },
+      "hybrid_rag": {
+        "avg": 0.0,
+        "n": 3
+      },
+      "llm_only": {
+        "avg": 1.0,
+        "n": 3
+      }
+    }
+  }
+}

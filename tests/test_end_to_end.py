@@ -220,6 +220,7 @@ class EndToEndTester:
         test_cases = [
             {"keyword": "胰腺炎", "entity_type": "Disease"},
             {"keyword": "疼痛", "entity_type": "Symptom"},
+            {"keyword": "血常规", "entity_type": "LaboratoryExamination"},
         ]
         
         success_count = 0

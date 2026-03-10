@@ -88,9 +88,9 @@
    - 可选：同义合并（如「急性胰腺炎」与「急性 胰腺炎」视为同一实体），可用简单规则或小词表，避免同一实体多节点。
 
 3. **类型与关系类型校验**  
-   - 若 entity.type 不在 `ENTITY_TYPES`，映射到默认类型（如 Entity/Disease）并打日志。  
-   - 若 relation.predicate 不在 `RELATION_TYPES`，映射到 `ASSOCIATED_WITH` 或丢弃并打日志。  
-   - 便于后续分析「模型常错类型」并反哺 prompt 或 schema。
+   - 若 entity.type 不在 `ENTITY_TYPES`，映射到默认类型（如 Disease）并打日志。  
+   - 若 relation.predicate 不在 `RELATION_TYPES`，映射到 `BELONGS_TO` 并打日志。  
+   - 实体/关系类型见 config.py（表2 实体描述框架、表3 实体关系描述框架）。
 
 ### 建议 5：两阶段抽取（可选、进阶）
 

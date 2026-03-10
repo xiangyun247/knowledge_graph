@@ -45,17 +45,19 @@ def create_schema(client: Neo4jClient):
         except Exception as e:
             logger.warning(f"  ⚠️  约束可能已存在: {entity_type}.name - {e}")
 
-    # 创建全文索引
+    # 创建全文索引（使用 config.ENTITY_TYPES 动态构建标签列表）
+    # 若实体类型已扩展，需先执行: DROP INDEX entity_name_fulltext IF EXISTS
     try:
-        query = """
+        labels_str = "|".join(entity_types)
+        query = f"""
         CREATE FULLTEXT INDEX entity_name_fulltext IF NOT EXISTS
-        FOR (n:Disease|Symptom|Treatment|Medicine|Examination|Department|Complication|RiskFactor)
+        FOR (n:{labels_str})
         ON EACH [n.name, n.description]
         """
         client.execute_write(query)
-        logger.info("  ✓ 创建全文索引")
+        logger.info("  ✓ 创建全文索引（覆盖 %d 种实体类型）", len(entity_types))
     except Exception as e:
-        logger.warning(f"  ⚠️  全文索引可能已存在 - {e}")
+        logger.warning("  ⚠️  全文索引可能已存在或创建失败，若实体类型已扩展请先执行: DROP INDEX entity_name_fulltext IF EXISTS - %s", e)
 
     logger.info("✓ 数据库模式创建完成")
 

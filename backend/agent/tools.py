@@ -210,7 +210,7 @@ def entity_search(
 ) -> str:
     """
     按关键词在知识图谱中查找实体（疾病、症状、药物、治疗、检查等）。用于：确认实体是否存在、获取实体类型与简述、为 graph_retrieve 提供 entity_names。与 graph_retrieve 配合：先 entity_search 定实体，再 graph_retrieve 查关系。
-    参数：keyword 必填，如「胰腺炎」「二甲双胍」；node_type 可选，如 Disease/Symptom/Medicine/Treatment/Examination，空为全部；limit 默认 10。
+    参数：keyword 必填，如「胰腺炎」「二甲双胍」；node_type 可选，如 Disease/Symptom/Medicine/Department/LaboratoryExamination 等（见 config.ENTITY_TYPES），空为全部；limit 默认 10。
     """
     nc = _neo4j_client()
     if nc:

@@ -5,6 +5,7 @@
 """
 
 import config
+from config import resolve_entity_type
 from typing import Dict, Any, List, Optional
 import logging
 import json
@@ -28,16 +29,19 @@ class QueryParser:
         self.entity_types = config.ENTITY_TYPES
         self.relation_types = config.RELATION_TYPES
 
-        # 查询意图类型
+        # 查询意图类型（与表3 关系类型对应）
         self.intent_types = [
             "definition",  # 定义/概念查询：什么是X？
             "symptom",  # 症状查询：有哪些症状？
             "treatment",  # 治疗查询：如何治疗？
-            "cause",  # 原因查询：为什么会X？
-            "diagnosis",  # 诊断查询：如何诊断？
+            "cause",  # 病因查询：为什么会X？
+            "diagnosis",  # 诊断/检查查询：如何诊断？需要做哪些检查？
             "prevention",  # 预防查询：如何预防？
             "complication",  # 并发症查询：会引起什么？
-            "comparison",  # 比较查询：X和Y有什么区别？
+            "prognosis",  # 预后查询：预后如何？
+            "population",  # 多发人群：哪些人容易得？
+            "department",  # 就诊科室：挂什么科？
+            "comparison",  # 比较/鉴别诊断：X和Y有什么区别？
             "other"  # 其他
         ]
 
@@ -244,16 +248,19 @@ class QueryParser:
         """识别查询意图"""
         query_lower = query.lower()
 
-        # 定义意图关键词
+        # 定义意图关键词（覆盖新关系类型对应的查询）
         intent_keywords = {
             "definition": ["什么是", "定义", "概念", "是指"],
-            "symptom": ["症状", "表现", "特征", "感觉"],
-            "treatment": ["治疗", "处理", "用药", "疗法"],
-            "cause": ["原因", "为什么", "导致", "引起"],
-            "diagnosis": ["诊断", "检查", "判断", "确诊"],
+            "symptom": ["症状", "表现", "特征", "感觉", "体征"],
+            "treatment": ["治疗", "处理", "用药", "疗法", "手术"],
+            "cause": ["原因", "为什么", "导致", "引起", "病因"],
+            "diagnosis": ["诊断", "检查", "判断", "确诊", "需要做哪些检查"],
             "prevention": ["预防", "避免", "防止"],
             "complication": ["并发症", "后果", "影响", "危害"],
-            "comparison": ["区别", "对比", "不同", "比较"]
+            "prognosis": ["预后", "恢复", "治愈", "能好吗"],
+            "population": ["多发", "人群", "哪些人", "好发于", "儿童", "老年"],
+            "department": ["科室", "挂号", "看什么科", "就诊"],
+            "comparison": ["区别", "对比", "不同", "比较", "鉴别"],
         }
 
         # 匹配意图
@@ -291,45 +298,43 @@ class QueryParser:
 
     def _extract_entities_by_keywords(self, query: str) -> List[Dict[str, Any]]:
         """
-        基于关键词的简单实体识别
-
-        Args:
-            query: 查询文本
-
-        Returns:
-            实体列表
+        基于关键词的简单实体识别（支持新实体类型）
         """
         entities = []
 
-        # 疾病关键词
-        disease_keywords = ["炎", "症", "病", "癌", "瘤", "疾"]
-        # 症状关键词
-        symptom_keywords = ["痛", "疼", "热", "肿", "吐", "泻", "晕"]
-        # 治疗关键词
-        treatment_keywords = ["治疗", "手术", "疗法", "护理"]
-        # 药物关键词
-        medicine_keywords = ["药", "素", "灵", "林", "西林"]
+        # 实体类型关键词映射（表2 实体描述框架）
+        type_keywords = {
+            "Disease": ["炎", "症", "病", "癌", "瘤", "疾", "综合征"],
+            "Symptom": ["痛", "疼", "热", "肿", "吐", "泻", "晕", "咳", "红", "痒"],
+            "Medicine": ["药", "素", "灵", "林", "西林", "激素", "片", "胶囊"],
+            "Population": ["儿童", "成人", "老年", "孕妇", "群体"],
+            "Department": ["科", "病房", "门诊", "内科", "外科"],
+            "Hospital": ["医院", "中心", "研究所"],
+            "PhysicalExamination": ["呼吸", "心率", "血压", "体温"],
+            "LaboratoryExamination": ["血", "尿", "便", "常规", "生化"],
+            "ImagingExamination": ["CT", "MRI", "超声", "X", "影像"],
+            "AnatomicalSite": ["腹部", "颈部", "心脏", "胰腺", "肝", "肾"],
+            "TCMTreatment": ["清热", "活血", "化瘀", "解毒", "中医"],
+            "Surgery": ["手术", "介入", "切除"],
+            "DrugTreatment": ["治疗", "用药", "输液"],
+            "Prognosis": ["预后", "良好", "随访"],
+        }
 
-        # 提取可能的实体
-        words = re.findall(r'[\u4e00-\u9fa5]{2,8}', query)
+        words = re.findall(r'[\u4e00-\u9fa5a-zA-Z0-9]{2,8}', query)
 
         for word in words:
             entity_type = None
-
-            if any(kw in word for kw in disease_keywords):
-                entity_type = "Disease"
-            elif any(kw in word for kw in symptom_keywords):
-                entity_type = "Symptom"
-            elif any(kw in word for kw in treatment_keywords):
-                entity_type = "Treatment"
-            elif any(kw in word for kw in medicine_keywords):
-                entity_type = "Medicine"
-
+            for etype, kws in type_keywords.items():
+                if any(kw in word for kw in kws) and etype in self.entity_types:
+                    entity_type = etype
+                    break
+            if not entity_type and any(kw in word for kw in ["治疗", "手术", "疗法", "护理"]):
+                entity_type = "DrugTreatment" if "DrugTreatment" in self.entity_types else "OtherTreatment"
             if entity_type:
                 entities.append({
                     "name": word,
-                    "type": entity_type,
-                    "confidence": 0.6  # 规则匹配的置信度较低
+                    "type": resolve_entity_type(entity_type),
+                    "confidence": 0.6,
                 })
 
         return entities
@@ -364,7 +369,10 @@ class QueryParser:
             "confidence": self._calculate_confidence(llm_result, rule_result)
         }
 
-        # 去重实体
+        # 实体类型规范化（中文→英文）并去重
+        for e in merged["entities"]:
+            if isinstance(e, dict) and e.get("type"):
+                e["type"] = resolve_entity_type(e["type"])
         merged["entities"] = self._deduplicate_entities(merged["entities"])
 
         # 去重关键词
@@ -390,6 +398,10 @@ class QueryParser:
                 continue
 
             # 如果已存在，保留置信度更高的
+            # 确保 type 在配置中
+            etype = entity.get("type", "")
+            if etype and etype not in self.entity_types:
+                entity = {**entity, "type": resolve_entity_type(etype)}
             if name in unique_entities:
                 if entity.get("confidence", 0) > unique_entities[name].get("confidence", 0):
                     unique_entities[name] = entity

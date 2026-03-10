@@ -5,6 +5,7 @@
 """
 
 import config
+from config import ENTITY_TYPE_EN_TO_ZH
 from typing import List, Dict, Any, Optional, Set, Tuple
 import logging
 from db.neo4j_client import Neo4jClient
@@ -34,7 +35,8 @@ class GraphRetriever:
             query: str,
             entity_names: List[str],
             max_depth: Optional[int] = None,
-            limit: int = 50
+            limit: int = 50,
+            preferred_relation_types: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         从图中检索相关信息
@@ -44,6 +46,7 @@ class GraphRetriever:
             entity_names: 识别出的实体名称列表
             max_depth: 最大检索深度，默认从 config 读取
             limit: 返回结果数量限制
+            preferred_relation_types: 意图相关的关系类型，匹配时提升排序
 
         Returns:
             检索结果列表，每个结果包含实体、关系和路径信息
@@ -79,8 +82,10 @@ class GraphRetriever:
                 )
                 results.extend(path_results)
 
-            # 4. 去重和排序
-            results = self._deduplicate_and_rank(results, query)
+            # 4. 去重和排序（支持意图相关关系类型加权）
+            results = self._deduplicate_and_rank(
+                results, query, preferred_relation_types=preferred_relation_types
+            )
 
             # 5. 限制返回数量
             results = results[:limit]
@@ -431,37 +436,42 @@ class GraphRetriever:
     def _deduplicate_and_rank(
             self,
             results: List[Dict[str, Any]],
-            query: str
+            query: str,
+            preferred_relation_types: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        去重并排序结果
-
-        Args:
-            results: 原始结果列表
-            query: 用户查询（用于相关性计算）
-
-        Returns:
-            去重并排序后的结果
+        去重并排序结果。当 preferred_relation_types 非空时，路径/邻居结果中
+        若包含这些关系类型，则提升 relevance_score。
         """
         if not results:
             return []
 
-        # 去重（基于 node_id 或 name）
+        preferred = set(preferred_relation_types or [])
+
+        def _boost_score(r: Dict) -> float:
+            score = r.get("relevance_score", 0)
+            rel_types = r.get("relation_types") or []
+            if preferred and any(rt in preferred for rt in rel_types):
+                score += 0.2  # 意图相关关系加权
+            return min(1.0, score)
+
+        # 去重（基于 node_id 或 path 唯一键）
         unique_results = {}
         for result in results:
-            key = result.get("node_id") or result.get("name") or str(result)
+            key = result.get("node_id")
+            if key is None and result.get("type") == "path":
+                key = f"path:{result.get('start_entity','')}->{result.get('end_entity','')}"
+            if key is None:
+                key = result.get("name") or str(result)
 
-            # 如果已存在，保留相关性更高的
+            boosted = {**result, "relevance_score": _boost_score(result)}
             if key in unique_results:
-                if result.get("relevance_score", 0) > unique_results[key].get("relevance_score", 0):
-                    unique_results[key] = result
+                if boosted.get("relevance_score", 0) > unique_results[key].get("relevance_score", 0):
+                    unique_results[key] = boosted
             else:
-                unique_results[key] = result
+                unique_results[key] = boosted
 
-        # 转换为列表
         unique_list = list(unique_results.values())
-
-        # 根据相关性分数排序
         sorted_results = sorted(
             unique_list,
             key=lambda x: x.get("relevance_score", 0),
@@ -574,39 +584,49 @@ class GraphRetriever:
             # 构建节点列表
             nodes = []
             node_ids = set()
-            
-            # 定义节点类型到颜色的映射
-            node_color_map = {
-                "疾病": "#ff6b6b",
-                "症状": "#4ecdc4",
-                "治疗方法": "#45b7d1",
-                "药物": "#96ceb4",
-                "检查": "#ffeaa7",
-                "部位": "#dda0dd"
+
+            # 节点类型到颜色映射（按表2 实体分类）
+            NODE_COLOR_MAP = {
+                "Disease": "#ff6b6b",
+                "Symptom": "#4ecdc4",
+                "Population": "#a29bfe",
+                "Medicine": "#55efc4",
+                "Prognosis": "#74b9ff",
+                "PhysicalExamination": "#ffeaa7",
+                "LaboratoryExamination": "#fdcb6e",
+                "ImagingExamination": "#e17055",
+                "PathologyExamination": "#d63031",
+                "OtherExamination": "#e84393",
+                "AbnormalExaminationResult": "#fd79a8",
+                "TCMTreatment": "#00b894",
+                "Surgery": "#0984e3",
+                "DrugTreatment": "#6c5ce7",
+                "WesternPhysicalTherapy": "#00cec9",
+                "OtherTreatment": "#81ecec",
+                "AnatomicalSite": "#dfe6e9",
+                "AnatomicalSubstance": "#b2bec3",
+                "MedicalEquipment": "#636e72",
+                "Hospital": "#2d3436",
+                "Department": "#fab1a0",
+                "Gene": "#a8e6cf",
+                "Microorganism": "#ff8b94",
+                "PhysicalChemicalFactor": "#ffaaa5",
+                "PsychologicalBehavior": "#ffd3b6",
+                "Lifestyle": "#dcedd2",
+                "ImmuneFactor": "#ffecd2",
+                "DisuseFactor": "#e0bbe4",
+                "ICD10Code": "#9575cd",
+                "Synonym": "#b39ddb",
             }
 
             for record in node_records:
                 node = record["n"]
                 node_id = record["node_id"]
                 labels = record["labels"]
-                
-                # 获取节点类型（使用第一个标签作为类型）
-                node_type = labels[0] if labels else "未知"
-                
-                # 映射到中文类型名称
-                type_name_map = {
-                    "Disease": "疾病",
-                    "Symptom": "症状",
-                    "Treatment": "治疗方法",
-                    "Medicine": "药物",
-                    "Examination": "检查",
-                    "Location": "部位"
-                }
-                
-                type_name = type_name_map.get(node_type, node_type)
-                
-                # 设置节点颜色
-                color = node_color_map.get(type_name, "#9c27ff")
+
+                node_type = labels[0] if labels else "Entity"
+                type_name = ENTITY_TYPE_EN_TO_ZH.get(node_type, node_type)
+                color = NODE_COLOR_MAP.get(node_type, "#9c27ff")
                 
                 # 创建节点对象
                 node_obj = {

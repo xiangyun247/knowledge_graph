@@ -415,20 +415,30 @@ def process_basic_query(question: str) -> QueryResponse:
 # ==================== 原有辅助函数（保留） ====================
 
 def get_graph_stats() -> Dict[str, Any]:
-    """获取知识图谱统计信息"""
+    """获取知识图谱统计信息（使用 config.ENTITY_TYPES / RELATION_TYPES）"""
     try:
+        from config import ENTITY_TYPES, RELATION_TYPES
         with neo4j_client.driver.session() as session:
             entity_stats = {}
-            for entity_type in ["Disease", "Symptom", "Drug", "Department"]:
-                result = session.run(f"MATCH (n:{entity_type}) RETURN count(n) as count")
-                count = result.single()["count"]
-                entity_stats[entity_type] = count
+            for entity_type in ENTITY_TYPES:
+                try:
+                    result = session.run(f"MATCH (n:{entity_type}) RETURN count(n) as count")
+                    count = result.single()["count"]
+                    entity_stats[entity_type] = count
+                except Exception:
+                    entity_stats[entity_type] = 0
 
             relationship_stats = {}
-            for rel_type in ["HAS_SYMPTOM", "TREATS", "BELONGS_TO"]:
-                result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) as count")
-                count = result.single()["count"]
-                relationship_stats[rel_type] = count
+            for rel_type in RELATION_TYPES:
+                try:
+                    clean_rel = "".join(c if c.isalnum() or c == "_" else "_" for c in rel_type)
+                    if not clean_rel:
+                        continue
+                    result = session.run(f"MATCH ()-[r:{clean_rel}]->() RETURN count(r) as count")
+                    count = result.single()["count"]
+                    relationship_stats[rel_type] = count
+                except Exception:
+                    relationship_stats[rel_type] = 0
 
             return {
                 "entities": entity_stats,
@@ -442,10 +452,15 @@ def get_graph_stats() -> Dict[str, Any]:
 
 
 def search_entities_by_type(entity_type: str, keyword: str, limit: int = 10) -> List[Dict[str, Any]]:
-    """按类型搜索实体"""
+    """按类型搜索实体（entity_type 需在 config.ENTITY_TYPES 中）"""
     try:
+        from config import ENTITY_TYPES, resolve_entity_type
+        normalized_type = resolve_entity_type(entity_type)
+        if normalized_type not in ENTITY_TYPES:
+            logger.warning(f"未知实体类型: {entity_type}，使用 Disease")
+            normalized_type = "Disease"
         query = f"""
-        MATCH (n:{entity_type})
+        MATCH (n:{normalized_type})
         WHERE n.name =~ $regex
         RETURN n
         LIMIT $limit
@@ -580,7 +595,7 @@ async def get_stats_endpoint():
 
 @app.get("/search")
 async def search_endpoint(
-        entity_type: str = Query(..., description="实体类型（Disease, Symptom, Drug, Department）"),
+        entity_type: str = Query(..., description="实体类型（如 Disease, Symptom, Medicine, Department 等，见 config.ENTITY_TYPES）"),
         keyword: str = Query(..., description="搜索关键词"),
         limit: int = Query(10, ge=1, le=100, description="返回结果数量限制")
 ):

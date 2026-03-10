@@ -3,7 +3,14 @@
 从文本中提取实体和关系，构建知识图谱
 """
 
-import config  # ✅ 修改这里
+import config
+from config import (
+    resolve_entity_type,
+    resolve_relation_type,
+    ENTITY_NAME_MIN_LEN,
+    ENTITY_NAME_BLACKLIST,
+    RELATION_SEMANTICS,
+)
 from typing import List, Dict, Any, Optional
 import logging
 import re
@@ -180,6 +187,13 @@ class KnowledgeGraphBuilder:
                 # 后处理：实体名规范化、类型校验、关系与实体一致性（建议4）
                 extraction_result = self._validate_and_normalize_extraction(extraction_result)
 
+                # 质量统计日志（有丢弃时输出）
+                vstats = extraction_result.get("validation_stats") or {}
+                if any(vstats.get(k, 0) > 0 for k in ("entities_skipped_invalid", "entities_skipped_duplicate",
+                                                      "relations_skipped_subject_missing", "relations_skipped_object_missing",
+                                                      "relations_skipped_self_loop", "relations_skipped_duplicate", "relations_type_mapped")):
+                    logger.info("段落 %d 后处理统计: %s", i + 1, vstats)
+
                 # 处理实体
                 for entity in extraction_result.get("entities", []):
                     entity_key = (entity.get("name"), entity.get("type"))
@@ -248,15 +262,31 @@ class KnowledgeGraphBuilder:
         # 合并多余空格
         return " ".join(s.split())
 
+    @staticmethod
+    def _is_valid_entity_name(name: str) -> bool:
+        """
+        校验实体名是否有效：长度、黑名单、纯数字。
+        返回 False 时该实体应被过滤。
+        """
+        if not name or len(name) < ENTITY_NAME_MIN_LEN:
+            return False
+        if name in ENTITY_NAME_BLACKLIST:
+            return False
+        # 纯数字或纯符号
+        if re.match(r"^[\d\s\.\-]+$", name):
+            return False
+        return True
+
     def _validate_and_normalize_extraction(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """
         后处理校验与规范化（见 docs/OPTIMIZATION_SUGGESTIONS.md 建议4）：
-        - 实体名规范化、同义合并
+        - 实体名规范化、同义合并、过滤无效实体名
         - 实体类型/关系类型校验并映射到合法值
-        - 关系与实体一致性：subject/object 必须在 entities 中，否则仅丢弃并打日志
+        - 关系与实体一致性：subject/object 必须在 entities 中
+        - 自环过滤、重复去重、关系语义软校验
         """
         if not isinstance(result, dict):
-            return {"entities": [], "relations": []}
+            return {"entities": [], "relations": [], "validation_stats": {}}
         entities_in = result.get("entities") or []
         relations_in = result.get("relations") or []
         if not isinstance(entities_in, list):
@@ -264,7 +294,18 @@ class KnowledgeGraphBuilder:
         if not isinstance(relations_in, list):
             relations_in = []
 
-        # 1. 实体名规范化并去重（同义合并）
+        stats = {
+            "entities_skipped_invalid": 0,
+            "entities_skipped_duplicate": 0,
+            "relations_skipped_subject_missing": 0,
+            "relations_skipped_object_missing": 0,
+            "relations_skipped_self_loop": 0,
+            "relations_skipped_duplicate": 0,
+            "relations_type_mapped": 0,
+            "relations_semantic_warn": 0,
+        }
+
+        # 1. 实体名规范化、同义合并、过滤无效实体名
         entities_out: List[Dict[str, Any]] = []
         name_to_entity: Dict[str, Dict[str, Any]] = {}
         for e in entities_in:
@@ -274,12 +315,18 @@ class KnowledgeGraphBuilder:
             name = self._normalize_entity_name(raw_name)
             if not name:
                 continue
+            if not self._is_valid_entity_name(name):
+                stats["entities_skipped_invalid"] += 1
+                logger.debug("实体名无效（过短/黑名单/纯数字），跳过: %s", name)
+                continue
             if name in name_to_entity:
+                stats["entities_skipped_duplicate"] += 1
                 logger.debug("同义实体合并: 原始=%s, 规范名=%s", raw_name, name)
                 continue
-            entity_type = (e.get("type") or "").strip()
+            raw_type = (e.get("type") or "").strip()
+            entity_type = resolve_entity_type(raw_type)
             if entity_type not in self.entity_types:
-                logger.warning("实体类型不在配置中，映射为 Disease: name=%s, type=%s", name, entity_type)
+                logger.warning("实体类型不在配置中，映射为 Disease: name=%s, type=%s", name, raw_type)
                 entity_type = "Disease"
             entity_out = {
                 "name": name,
@@ -290,31 +337,91 @@ class KnowledgeGraphBuilder:
             entities_out.append(entity_out)
 
         valid_names = set(name_to_entity.keys())
+        name_to_type = {e["name"]: e["type"] for e in entities_out}
 
-        # 2. 关系：subject/object 必须在实体集中，否则丢弃并打日志；predicate 校验
-        default_relation = "ASSOCIATED_WITH"
+        # 2. 关系：subject/object 必须在实体集中；自环过滤；重复去重；predicate 校验；语义软校验
+        default_relation = "BELONGS_TO"
         relations_out: List[Dict[str, str]] = []
+        seen_relations: set = set()
         for r in relations_in:
             if not isinstance(r, dict):
                 continue
             sub = self._normalize_entity_name(r.get("subject") or "")
             obj = self._normalize_entity_name(r.get("object") or "")
-            pred = (r.get("predicate") or "").strip()
+            raw_pred = (r.get("predicate") or "").strip()
+            pred = resolve_relation_type(raw_pred)
             if not sub or not obj:
                 logger.debug("关系缺少 subject 或 object，丢弃: %s", r)
                 continue
             if sub not in valid_names:
+                stats["relations_skipped_subject_missing"] += 1
                 logger.info("关系 subject 不在实体列表中，丢弃该关系: subject=%s, object=%s, predicate=%s", sub, obj, pred)
                 continue
             if obj not in valid_names:
+                stats["relations_skipped_object_missing"] += 1
                 logger.info("关系 object 不在实体列表中，丢弃该关系: subject=%s, object=%s, predicate=%s", sub, obj, pred)
                 continue
+            if sub == obj:
+                stats["relations_skipped_self_loop"] += 1
+                logger.debug("关系自环，丢弃: %s -[%s]-> %s", sub, pred, obj)
+                continue
+            rel_key = (sub, pred, obj)
+            if rel_key in seen_relations:
+                stats["relations_skipped_duplicate"] += 1
+                logger.debug("关系重复，丢弃: %s", rel_key)
+                continue
             if pred not in self.relation_types:
-                logger.warning("关系类型不在配置中，映射为 %s: predicate=%s", default_relation, pred)
+                logger.warning("关系类型不在配置中，映射为 %s: predicate=%s", default_relation, raw_pred)
                 pred = default_relation
+                stats["relations_type_mapped"] += 1
+            # 语义软校验：不匹配时打日志，不丢弃
+            if pred in RELATION_SEMANTICS:
+                sub_types, obj_types = RELATION_SEMANTICS[pred]
+                sub_type = name_to_type.get(sub, "")
+                obj_type = name_to_type.get(obj, "")
+                mismatch = False
+                if sub_types and sub_type not in sub_types:
+                    mismatch = True
+                    logger.debug("关系语义提示: %s 的 subject 类型 %s 不在预期 %s 中: %s", pred, sub_type, sub_types, sub)
+                if obj_types and obj_type not in obj_types:
+                    mismatch = True
+                    logger.debug("关系语义提示: %s 的 object 类型 %s 不在预期 %s 中: %s", pred, obj_type, obj_types, obj)
+                if mismatch:
+                    stats["relations_semantic_warn"] += 1
+            seen_relations.add(rel_key)
             relations_out.append({"subject": sub, "predicate": pred, "object": obj})
 
-        return {"entities": entities_out, "relations": relations_out}
+        return {"entities": entities_out, "relations": relations_out, "validation_stats": stats}
+
+    def _build_entity_type_groups(self) -> str:
+        """按类别分组构建实体类型描述，便于 LLM 理解与选择"""
+        groups = [
+            "【基础】Disease(疾病), Symptom(症状或体征), Population(群体), Medicine(药物), Prognosis(预后)",
+            "【检查检验】PhysicalExamination(体格检查), LaboratoryExamination(实验室检查), ImagingExamination(影像学检查), PathologyExamination(病理检查), OtherExamination(其它检查), AbnormalExaminationResult(异常检查结果)",
+            "【治疗】TCMTreatment(中医治疗), Surgery(手术), DrugTreatment(药物治疗), WesternPhysicalTherapy(西医理疗), OtherTreatment(其它治疗)",
+            "【解剖】AnatomicalSite(解剖部位), AnatomicalSubstance(解剖物质)",
+            "【设备】MedicalEquipment(医用设备、器械和材料)",
+            "【机构】Hospital(医院), Department(科室)",
+            "【病因类】Gene(基因), Microorganism(微生物类), PhysicalChemicalFactor(理化因素), PsychologicalBehavior(心理行为), Lifestyle(生活习惯), ImmuneFactor(免疫因素), DisuseFactor(废用性因素)",
+            "【语义】ICD10Code(ICD10编码), Synonym(同义词)",
+        ]
+        return "\n".join(groups)
+
+    def _build_relation_type_groups(self) -> str:
+        """按类别分组构建关系类型描述，便于 LLM 理解与选择"""
+        groups = [
+            "【疾病-检查】HAS_ABNORMAL_EXAM_RESULT(疾病-异常检查结果), EXAM_HAS_ABNORMAL_RESULT(检查-异常结果), REQUIRES_EXAM(用于检查)",
+            "【疾病/症状-治疗/药物】TREATED_BY(用于治疗), PREVENTED_BY(用于预防)",
+            "【治疗-疾病】TREATS_COMPLICATION(治疗并发症)",
+            "【药物-疾病/症状】HAS_SIDE_EFFECT(副作用)",
+            "【疾病-症状/群体/解剖/预后】HAS_SYMPTOM(症状或体征), AFFECTS_POPULATION(多发人群), AFFECTS_SITE(发病部位), HAS_PROGNOSIS(预后)",
+            "【疾病-疾病】HAS_COMPLICATION(并发症), DIFFERENTIAL_DIAGNOSIS(鉴别诊断)",
+            "【疾病-病因】HAS_ETIOLOGY(病因)",
+            "【疾病-机构】BELONGS_TO_DEPARTMENT(就诊科室), TREATED_AT_HOSPITAL(就诊医院)",
+            "【检查/治疗-设备】USES_EQUIPMENT(使用于)",
+            "【通用/语义】BELONGS_TO(属于), HAS_ICD10_CODE(ICD10编码), HAS_SYNONYM(别称)",
+        ]
+        return "\n".join(groups)
 
     def _extract_entities_and_relations(self, sentence: str) -> Dict[str, Any]:
         """
@@ -326,12 +433,18 @@ class KnowledgeGraphBuilder:
         Returns:
             提取结果 {"entities": [...], "relations": [...]}
         """
-        # 构建提示词（含 few-shot 与格式约束，见 docs/OPTIMIZATION_SUGGESTIONS.md 建议3）
+        # 构建提示词：按类别分组描述 + Few-shot 示例（覆盖新类型）
+        entity_groups = self._build_entity_type_groups()
+        relation_groups = self._build_relation_type_groups()
+
         prompt = f"""
 请从以下医学文本中提取实体和关系。
 
-实体类型包括：{', '.join(self.entity_types)}
-关系类型包括：{', '.join(self.relation_types)}
+【实体类型】按类别分组，请严格使用下列类型名：
+{entity_groups}
+
+【关系类型】按类别分组，请严格使用下列类型名：
+{relation_groups}
 
 【输出格式约束】
 - 只输出一个 JSON 对象，包含且仅包含 "entities" 和 "relations" 两个 key。
@@ -346,9 +459,9 @@ class KnowledgeGraphBuilder:
     {{"name": "急性胰腺炎", "type": "Disease", "description": "疾病"}},
     {{"name": "腹痛", "type": "Symptom", "description": "症状"}},
     {{"name": "恶心呕吐", "type": "Symptom", "description": "症状"}},
-    {{"name": "禁食", "type": "Treatment", "description": "治疗方式"}},
-    {{"name": "补液", "type": "Treatment", "description": "治疗方式"}},
-    {{"name": "血淀粉酶检查", "type": "Examination", "description": "检查"}}
+    {{"name": "禁食", "type": "DrugTreatment", "description": "治疗方式"}},
+    {{"name": "补液", "type": "DrugTreatment", "description": "治疗方式"}},
+    {{"name": "血淀粉酶检查", "type": "LaboratoryExamination", "description": "实验室检查"}}
   ],
   "relations": [
     {{"subject": "急性胰腺炎", "predicate": "HAS_SYMPTOM", "object": "腹痛"}},
@@ -360,6 +473,75 @@ class KnowledgeGraphBuilder:
 }}
 
 【示例 2】
+输入文本：川崎病多发于儿童，常见于5岁以下儿童。血沉增快、ST段改变是常见异常检查结果。可予阿司匹林抗炎，并需超声心动图检查。预后良好。
+输出：
+{{
+  "entities": [
+    {{"name": "川崎病", "type": "Disease", "description": "疾病"}},
+    {{"name": "儿童", "type": "Population", "description": "群体"}},
+    {{"name": "血沉增快", "type": "AbnormalExaminationResult", "description": "异常检查结果"}},
+    {{"name": "ST段改变", "type": "AbnormalExaminationResult", "description": "异常检查结果"}},
+    {{"name": "阿司匹林", "type": "Medicine", "description": "药物"}},
+    {{"name": "超声心动图", "type": "ImagingExamination", "description": "影像学检查"}},
+    {{"name": "良好", "type": "Prognosis", "description": "预后"}}
+  ],
+  "relations": [
+    {{"subject": "川崎病", "predicate": "AFFECTS_POPULATION", "object": "儿童"}},
+    {{"subject": "川崎病", "predicate": "HAS_ABNORMAL_EXAM_RESULT", "object": "血沉增快"}},
+    {{"subject": "川崎病", "predicate": "HAS_ABNORMAL_EXAM_RESULT", "object": "ST段改变"}},
+    {{"subject": "川崎病", "predicate": "TREATED_BY", "object": "阿司匹林"}},
+    {{"subject": "川崎病", "predicate": "REQUIRES_EXAM", "object": "超声心动图"}},
+    {{"subject": "川崎病", "predicate": "HAS_PROGNOSIS", "object": "良好"}}
+  ]
+}}
+
+【示例 3】
+输入文本：急性胰腺炎可并发假性囊肿、胰腺坏死。需与消化性溃疡穿孔鉴别。发病部位在腹部。可就诊于消化内科或普外科。
+输出：
+{{
+  "entities": [
+    {{"name": "急性胰腺炎", "type": "Disease", "description": "疾病"}},
+    {{"name": "假性囊肿", "type": "Disease", "description": "并发症"}},
+    {{"name": "胰腺坏死", "type": "Disease", "description": "并发症"}},
+    {{"name": "消化性溃疡穿孔", "type": "Disease", "description": "鉴别疾病"}},
+    {{"name": "腹部", "type": "AnatomicalSite", "description": "解剖部位"}},
+    {{"name": "消化内科", "type": "Department", "description": "科室"}},
+    {{"name": "普外科", "type": "Department", "description": "科室"}}
+  ],
+  "relations": [
+    {{"subject": "急性胰腺炎", "predicate": "HAS_COMPLICATION", "object": "假性囊肿"}},
+    {{"subject": "急性胰腺炎", "predicate": "HAS_COMPLICATION", "object": "胰腺坏死"}},
+    {{"subject": "急性胰腺炎", "predicate": "DIFFERENTIAL_DIAGNOSIS", "object": "消化性溃疡穿孔"}},
+    {{"subject": "急性胰腺炎", "predicate": "AFFECTS_SITE", "object": "腹部"}},
+    {{"subject": "急性胰腺炎", "predicate": "BELONGS_TO_DEPARTMENT", "object": "消化内科"}},
+    {{"subject": "急性胰腺炎", "predicate": "BELONGS_TO_DEPARTMENT", "object": "普外科"}}
+  ]
+}}
+
+【示例 4】
+输入文本：长期熬夜、饮水量少可能导致胰腺炎。腺病毒可诱发川崎病。糖皮质激素可导致急性肾损伤、消化不良等副作用。
+输出：
+{{
+  "entities": [
+    {{"name": "熬夜", "type": "Lifestyle", "description": "生活习惯"}},
+    {{"name": "饮水量少", "type": "Lifestyle", "description": "生活习惯"}},
+    {{"name": "胰腺炎", "type": "Disease", "description": "疾病"}},
+    {{"name": "腺病毒", "type": "Microorganism", "description": "微生物"}},
+    {{"name": "川崎病", "type": "Disease", "description": "疾病"}},
+    {{"name": "糖皮质激素", "type": "Medicine", "description": "药物"}},
+    {{"name": "急性肾损伤", "type": "Disease", "description": "副作用"}},
+    {{"name": "消化不良", "type": "Symptom", "description": "副作用"}}
+  ],
+  "relations": [
+    {{"subject": "熬夜", "predicate": "HAS_ETIOLOGY", "object": "胰腺炎"}},
+    {{"subject": "饮水量少", "predicate": "HAS_ETIOLOGY", "object": "胰腺炎"}},
+    {{"subject": "腺病毒", "predicate": "HAS_ETIOLOGY", "object": "川崎病"}},
+    {{"subject": "糖皮质激素", "predicate": "HAS_SIDE_EFFECT", "object": "急性肾损伤"}},
+    {{"subject": "糖皮质激素", "predicate": "HAS_SIDE_EFFECT", "object": "消化不良"}}
+  ]
+}}
+
+【示例 5】
 输入文本：患者今日一般情况可。
 输出：
 {{"entities": [], "relations": []}}
@@ -529,10 +711,10 @@ class KnowledgeGraphBuilder:
         # 检查关系类型是否有效
         if predicate not in self.relation_types:
             logger.warning(f"未知的关系类型: {predicate}")
-            predicate = "ASSOCIATED_WITH"  # 默认关系
+            predicate = "BELONGS_TO"  # 默认关系
 
         # 关系类型仅允许字母数字下划线（Neo4j 标签/类型规范）
-        clean_predicate = re.sub(r'[^a-zA-Z0-9_]', '_', predicate) or "ASSOCIATED_WITH"
+        clean_predicate = re.sub(r'[^a-zA-Z0-9_]', '_', predicate) or "BELONGS_TO"
 
         # 避免 MATCH (a),(b) 笛卡尔积：先匹配 a，再匹配 b
         query = f"""

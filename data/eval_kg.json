@@ -1,0 +1,436 @@
+[
+  {
+    "id": "sent_001",
+    "text": "急性胰腺炎是胰腺因胰蛋白酶的自身消化作用而引起的疾病，主要表现为上腹部剧烈疼痛，并可伴有恶心、呕吐。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "上腹部剧烈疼痛", "type": "symptom" },
+      { "id": "e3", "text": "恶心", "type": "symptom" },
+      { "id": "e4", "text": "呕吐", "type": "symptom" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e1", "object": "e3", "type": "has_symptom" },
+      { "subject": "e1", "object": "e4", "type": "has_symptom" }
+    ]
+  },
+  {
+    "id": "sent_002",
+    "text": "胰腺炎患者常出现上腹部持续性疼痛，向背部放射，并伴有发热和白细胞计数升高。",
+    "entities": [
+      { "id": "e1", "text": "胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "上腹部持续性疼痛", "type": "symptom" },
+      { "id": "e3", "text": "背部放射痛", "type": "symptom" },
+      { "id": "e4", "text": "发热", "type": "symptom" },
+      { "id": "e5", "text": "白细胞计数升高", "type": "lab_result" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e1", "object": "e3", "type": "has_symptom" },
+      { "subject": "e1", "object": "e4", "type": "has_symptom" },
+      { "subject": "e1", "object": "e5", "type": "has_lab_abnormality" }
+    ]
+  },
+  {
+    "id": "sent_003",
+    "text": "急性胰腺炎的常见并发症包括急性呼吸窘迫综合征和急性肾功能不全。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "急性呼吸窘迫综合征", "type": "complication" },
+      { "id": "e3", "text": "急性肾功能不全", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" },
+      { "subject": "e1", "object": "e3", "type": "has_complication" }
+    ]
+  },
+  {
+    "id": "sent_004",
+    "text": "重症急性胰腺炎患者应给予禁食、胃肠减压、补液、镇痛以及抑制胰酶分泌等综合治疗。",
+    "entities": [
+      { "id": "e1", "text": "重症急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "禁食", "type": "treatment" },
+      { "id": "e3", "text": "胃肠减压", "type": "treatment" },
+      { "id": "e4", "text": "补液", "type": "treatment" },
+      { "id": "e5", "text": "镇痛", "type": "treatment" },
+      { "id": "e6", "text": "抑制胰酶分泌", "type": "treatment" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_treatment" },
+      { "subject": "e1", "object": "e3", "type": "has_treatment" },
+      { "subject": "e1", "object": "e4", "type": "has_treatment" },
+      { "subject": "e1", "object": "e5", "type": "has_treatment" },
+      { "subject": "e1", "object": "e6", "type": "has_treatment" }
+    ]
+  },
+  {
+    "id": "sent_005",
+    "text": "超声检查和腹部增强 CT 是评估急性胰腺炎严重程度及并发症的重要影像学手段。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "超声检查", "type": "examination" },
+      { "id": "e3", "text": "腹部增强 CT", "type": "examination" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_examination" },
+      { "subject": "e1", "object": "e3", "type": "has_examination" }
+    ]
+  },
+  {
+    "id": "sent_006",
+    "text": "高脂血症性急性胰腺炎多见于血清甘油三酯显著升高的肥胖患者。",
+    "entities": [
+      { "id": "e1", "text": "高脂血症性急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "血清甘油三酯显著升高", "type": "lab_result" },
+      { "id": "e3", "text": "肥胖患者", "type": "population" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_lab_abnormality" },
+      { "subject": "e1", "object": "e3", "type": "has_risk_population" }
+    ]
+  },
+  {
+    "id": "sent_007",
+    "text": "胆结石是胆源性急性胰腺炎最常见的病因之一。",
+    "entities": [
+      { "id": "e1", "text": "胆源性急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "胆结石", "type": "etiology" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_etiology" }
+    ]
+  },
+  {
+    "id": "sent_008",
+    "text": "酒精性急性胰腺炎与长期大量饮酒密切相关。",
+    "entities": [
+      { "id": "e1", "text": "酒精性急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "长期大量饮酒", "type": "etiology" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_etiology" }
+    ]
+  },
+  {
+    "id": "sent_009",
+    "text": "轻症急性胰腺炎通常无器官功能衰竭和局部并发症，病程短、预后好。",
+    "entities": [
+      { "id": "e1", "text": "轻症急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "器官功能衰竭", "type": "complication" },
+      { "id": "e3", "text": "局部并发症", "type": "complication" },
+      { "id": "e4", "text": "预后好", "type": "prognosis" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "lacks_complication" },
+      { "subject": "e1", "object": "e3", "type": "lacks_complication" },
+      { "subject": "e1", "object": "e4", "type": "has_prognosis" }
+    ]
+  },
+  {
+    "id": "sent_010",
+    "text": "重症急性胰腺炎常伴有持续超过 48 小时的多器官功能衰竭。",
+    "entities": [
+      { "id": "e1", "text": "重症急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "多器官功能衰竭", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" }
+    ]
+  },
+  {
+    "id": "sent_011",
+    "text": "急性胰腺炎患者出现低钙血症提示病情较重，预后不良。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "低钙血症", "type": "lab_result" },
+      { "id": "e3", "text": "预后不良", "type": "prognosis" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_lab_abnormality" },
+      { "subject": "e1", "object": "e3", "type": "has_prognosis" }
+    ]
+  },
+  {
+    "id": "sent_012",
+    "text": "急性胰腺炎的局部并发症包括胰腺坏死、胰周积液和胰腺假性囊肿。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "胰腺坏死", "type": "complication" },
+      { "id": "e3", "text": "胰周积液", "type": "complication" },
+      { "id": "e4", "text": "胰腺假性囊肿", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" },
+      { "subject": "e1", "object": "e3", "type": "has_complication" },
+      { "subject": "e1", "object": "e4", "type": "has_complication" }
+    ]
+  },
+  {
+    "id": "sent_013",
+    "text": "急性胰腺炎合并感染性坏死时，常出现持续发热和白细胞明显升高。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "感染性坏死", "type": "complication" },
+      { "id": "e3", "text": "持续发热", "type": "symptom" },
+      { "id": "e4", "text": "白细胞明显升高", "type": "lab_result" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" },
+      { "subject": "e2", "object": "e3", "type": "has_symptom" },
+      { "subject": "e2", "object": "e4", "type": "has_lab_abnormality" }
+    ]
+  },
+  {
+    "id": "sent_014",
+    "text": "急性胰腺炎的早期支持治疗包括禁食、积极补液和有效镇痛。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "禁食", "type": "treatment" },
+      { "id": "e3", "text": "积极补液", "type": "treatment" },
+      { "id": "e4", "text": "有效镇痛", "type": "treatment" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_treatment" },
+      { "subject": "e1", "object": "e3", "type": "has_treatment" },
+      { "subject": "e1", "object": "e4", "type": "has_treatment" }
+    ]
+  },
+  {
+    "id": "sent_015",
+    "text": "重症急性胰腺炎患者常需要入住重症监护病房接受器官功能支持治疗。",
+    "entities": [
+      { "id": "e1", "text": "重症急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "重症监护病房", "type": "treatment_place" },
+      { "id": "e3", "text": "器官功能支持治疗", "type": "treatment" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "treated_at" },
+      { "subject": "e1", "object": "e3", "type": "has_treatment" }
+    ]
+  },
+  {
+    "id": "sent_016",
+    "text": "急性胰腺炎患者恢复期应避免高脂肪饮食和饮酒，以减少复发风险。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "高脂肪饮食", "type": "risk_factor" },
+      { "id": "e3", "text": "饮酒", "type": "risk_factor" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "should_avoid" },
+      { "subject": "e1", "object": "e3", "type": "should_avoid" }
+    ]
+  },
+  {
+    "id": "sent_017",
+    "text": "持续性严重腹痛、恶心呕吐和腹胀是急性胰腺炎典型的临床表现。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "持续性严重腹痛", "type": "symptom" },
+      { "id": "e3", "text": "恶心呕吐", "type": "symptom" },
+      { "id": "e4", "text": "腹胀", "type": "symptom" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e1", "object": "e3", "type": "has_symptom" },
+      { "subject": "e1", "object": "e4", "type": "has_symptom" }
+    ]
+  },
+  {
+    "id": "sent_018",
+    "text": "急性胰腺炎患者出现呼吸困难和低氧血症时应警惕急性呼吸窘迫综合征的发生。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "呼吸困难", "type": "symptom" },
+      { "id": "e3", "text": "低氧血症", "type": "lab_result" },
+      { "id": "e4", "text": "急性呼吸窘迫综合征", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e4", "type": "has_complication" },
+      { "subject": "e4", "object": "e2", "type": "has_symptom" },
+      { "subject": "e4", "object": "e3", "type": "has_lab_abnormality" }
+    ]
+  },
+  {
+    "id": "sent_019",
+    "text": "腹部增强 CT 不仅有助于确定急性胰腺炎的诊断，还能评估坏死范围和是否存在局部并发症。",
+    "entities": [
+      { "id": "e1", "text": "腹部增强 CT", "type": "examination" },
+      { "id": "e2", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e3", "text": "坏死范围", "type": "imaging_finding" },
+      { "id": "e4", "text": "局部并发症", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "helps_diagnose" },
+      { "subject": "e1", "object": "e3", "type": "evaluates" },
+      { "subject": "e1", "object": "e4", "type": "evaluates" }
+    ]
+  },
+  {
+    "id": "sent_020",
+    "text": "BISAP 评分和 APACHE II 评分常用于评估急性胰腺炎的严重程度和预后。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "BISAP 评分", "type": "score" },
+      { "id": "e3", "text": "APACHE II 评分", "type": "score" },
+      { "id": "e4", "text": "严重程度", "type": "severity_indicator" },
+      { "id": "e5", "text": "预后", "type": "prognosis" }
+    ],
+    "relations": [
+      { "subject": "e2", "object": "e1", "type": "evaluates_severity_of" },
+      { "subject": "e3", "object": "e1", "type": "evaluates_severity_of" },
+      { "subject": "e2", "object": "e5", "type": "predicts" },
+      { "subject": "e3", "object": "e5", "type": "predicts" }
+    ]
+  },
+  {
+    "id": "sent_021",
+    "text": "急性胰腺炎患者出现黄疸时，需要考虑胆总管结石或胆道梗阻的可能。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "黄疸", "type": "symptom" },
+      { "id": "e3", "text": "胆总管结石", "type": "etiology" },
+      { "id": "e4", "text": "胆道梗阻", "type": "etiology" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e2", "object": "e3", "type": "may_indicate" },
+      { "subject": "e2", "object": "e4", "type": "may_indicate" }
+    ]
+  },
+  {
+    "id": "sent_022",
+    "text": "ERCP 早期解除胆总管梗阻可改善胆源性急性胰腺炎患者的预后。",
+    "entities": [
+      { "id": "e1", "text": "ERCP", "type": "treatment" },
+      { "id": "e2", "text": "胆源性急性胰腺炎", "type": "disease" },
+      { "id": "e3", "text": "胆总管梗阻", "type": "etiology" },
+      { "id": "e4", "text": "预后", "type": "prognosis" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e3", "type": "relieves" },
+      { "subject": "e1", "object": "e2", "type": "has_treatment" },
+      { "subject": "e1", "object": "e4", "type": "improves" }
+    ]
+  },
+  {
+    "id": "sent_023",
+    "text": "反复发作的急性胰腺炎如果未能控制危险因素，可能发展为慢性胰腺炎。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "慢性胰腺炎", "type": "disease" },
+      { "id": "e3", "text": "危险因素", "type": "risk_factor" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "may_progress_to" },
+      { "subject": "e3", "object": "e1", "type": "increases_risk_of" }
+    ]
+  },
+  {
+    "id": "sent_024",
+    "text": "急性胰腺炎患者出现顽固性低血压，需警惕感染性休克和多器官功能衰竭。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "顽固性低血压", "type": "symptom" },
+      { "id": "e3", "text": "感染性休克", "type": "complication" },
+      { "id": "e4", "text": "多器官功能衰竭", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e2", "object": "e3", "type": "may_indicate" },
+      { "subject": "e3", "object": "e4", "type": "may_lead_to" }
+    ]
+  },
+  {
+    "id": "sent_025",
+    "text": "急性胰腺炎合并肠麻痹时，患者常表现为腹胀和肠鸣音减弱或消失。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "肠麻痹", "type": "complication" },
+      { "id": "e3", "text": "腹胀", "type": "symptom" },
+      { "id": "e4", "text": "肠鸣音减弱或消失", "type": "symptom" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" },
+      { "subject": "e2", "object": "e3", "type": "has_symptom" },
+      { "subject": "e2", "object": "e4", "type": "has_symptom" }
+    ]
+  },
+  {
+    "id": "sent_026",
+    "text": "早期肠内营养有助于保护急性胰腺炎患者的肠道屏障功能，降低感染并发症发生率。",
+    "entities": [
+      { "id": "e1", "text": "肠内营养", "type": "treatment" },
+      { "id": "e2", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e3", "text": "感染并发症", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_treatment" },
+      { "subject": "e1", "object": "e3", "type": "reduces_risk_of" }
+    ]
+  },
+  {
+    "id": "sent_027",
+    "text": "急性胰腺炎患者的腹痛通常在上腹部，向背部放射，呈持续性钝痛或刀割样剧痛。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "上腹部腹痛", "type": "symptom" },
+      { "id": "e3", "text": "向背部放射", "type": "symptom" },
+      { "id": "e4", "text": "持续性钝痛或刀割样剧痛", "type": "symptom" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e1", "object": "e3", "type": "has_symptom" },
+      { "subject": "e1", "object": "e4", "type": "has_symptom" }
+    ]
+  },
+  {
+    "id": "sent_028",
+    "text": "急性胰腺炎患者如果出现意识障碍、呼吸急促和少尿，需要立即评估是否进入多器官功能衰竭阶段。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "意识障碍", "type": "symptom" },
+      { "id": "e3", "text": "呼吸急促", "type": "symptom" },
+      { "id": "e4", "text": "少尿", "type": "symptom" },
+      { "id": "e5", "text": "多器官功能衰竭", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e5", "type": "has_complication" },
+      { "subject": "e5", "object": "e2", "type": "has_symptom" },
+      { "subject": "e5", "object": "e3", "type": "has_symptom" },
+      { "subject": "e5", "object": "e4", "type": "has_symptom" }
+    ]
+  },
+  {
+    "id": "sent_029",
+    "text": "长期高脂饮食、肥胖和糖尿病是急性胰腺炎的重要危险因素之一。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "长期高脂饮食", "type": "risk_factor" },
+      { "id": "e3", "text": "肥胖", "type": "risk_factor" },
+      { "id": "e4", "text": "糖尿病", "type": "risk_factor" }
+    ],
+    "relations": [
+      { "subject": "e2", "object": "e1", "type": "increases_risk_of" },
+      { "subject": "e3", "object": "e1", "type": "increases_risk_of" },
+      { "subject": "e4", "object": "e1", "type": "increases_risk_of" }
+    ]
+  },
+  {
+    "id": "sent_030",
+    "text": "急性胰腺炎患者若合并门静脉或脾静脉血栓，可出现胃静脉曲张和消化道出血等并发症。",
+    "entities": [
+      { "id": "e1", "text": "急性胰腺炎", "type": "disease" },
+      { "id": "e2", "text": "门静脉血栓", "type": "complication" },
+      { "id": "e3", "text": "脾静脉血栓", "type": "complication" },
+      { "id": "e4", "text": "胃静脉曲张", "type": "complication" },
+      { "id": "e5", "text": "消化道出血", "type": "complication" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_complication" },
+      { "subject": "e1", "object": "e3", "type": "has_complication" },
+      { "subject": "e2", "object": "e4", "type": "may_lead_to" },
+      { "subject": "e4", "object": "e5", "type": "may_lead_to" }
+    ]
+  }
+]

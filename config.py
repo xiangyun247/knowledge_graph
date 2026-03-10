@@ -251,31 +251,292 @@ except Exception as e:
     logging.basicConfig(level=LOG_LEVEL)
 
 # ==================== 知识图谱配置 ====================
+# 参考：表2 实体描述框架、表3 实体关系描述框架
 
-# 实体类型
+# 实体类型（表2 实体描述框架）
 ENTITY_TYPES = [
+    # 基础分类
     "Disease",  # 疾病
-    "Symptom",  # 症状
-    "Treatment",  # 治疗方法
+    "Symptom",  # 症状或体征
+    "Population",  # 群体
     "Medicine",  # 药物
-    "Examination",  # 检查
+    "Prognosis",  # 预后
+    # 检查检验及其子分类
+    "PhysicalExamination",  # 体格检查
+    "LaboratoryExamination",  # 实验室检查
+    "ImagingExamination",  # 影像学检查
+    "PathologyExamination",  # 病理检查
+    "OtherExamination",  # 其它检查
+    "AbnormalExaminationResult",  # 异常检查结果
+    # 治疗及其子分类
+    "TCMTreatment",  # 中医治疗
+    "Surgery",  # 手术
+    "DrugTreatment",  # 药物治疗
+    "WesternPhysicalTherapy",  # 西医理疗
+    "OtherTreatment",  # 其它治疗
+    # 解剖部位及物质
+    "AnatomicalSite",  # 解剖部位
+    "AnatomicalSubstance",  # 解剖物质
+    # 医用设备、器械和材料
+    "MedicalEquipment",  # 医用设备、器械和材料
+    # 机构
+    "Hospital",  # 医院
     "Department",  # 科室
-    "Complication",  # 并发症
-    "RiskFactor",  # 风险因素
+    # 病因类及其子分类
+    "Gene",  # 基因
+    "Microorganism",  # 微生物类
+    "PhysicalChemicalFactor",  # 理化因素
+    "PsychologicalBehavior",  # 心理行为
+    "Lifestyle",  # 生活习惯
+    "ImmuneFactor",  # 免疫因素
+    "DisuseFactor",  # 废用性因素
+    # 语义
+    "ICD10Code",  # ICD10 编码
+    "Synonym",  # 同义词
 ]
 
-# 关系类型
+# 关系类型（表3 实体关系描述框架）
 RELATION_TYPES = [
-    "HAS_SYMPTOM",  # 有症状
-    "TREATED_BY",  # 治疗方式
-    "USES_MEDICINE",  # 使用药物
-    "REQUIRES_EXAM",  # 需要检查
-    "BELONGS_TO",  # 归属科室
-    "CAUSES",  # 导致
-    "LEADS_TO",  # 引发
-    "ASSOCIATED_WITH",  # 相关联
-    "INCREASES_RISK",  # 增加风险
+    # 疾病-异常检查结果 / 检查检验-异常检查结果
+    "HAS_ABNORMAL_EXAM_RESULT",  # 疾病-异常检查结果
+    "EXAM_HAS_ABNORMAL_RESULT",  # 检查检验-异常检查结果
+    # 疾病-检查检验
+    "REQUIRES_EXAM",  # 用于检查
+    # 疾病/症状-治疗/药物
+    "TREATED_BY",  # 用于治疗
+    "PREVENTED_BY",  # 用于预防
+    # 治疗-疾病
+    "TREATS_COMPLICATION",  # 治疗并发症
+    # 药物-疾病/症状
+    "HAS_SIDE_EFFECT",  # 副作用
+    # 疾病-症状或体征
+    "HAS_SYMPTOM",  # 症状或体征
+    # 疾病-群体
+    "AFFECTS_POPULATION",  # 多发人群
+    # 疾病-疾病
+    "HAS_COMPLICATION",  # 并发症
+    "DIFFERENTIAL_DIAGNOSIS",  # 鉴别诊断
+    # 疾病-病因类
+    "HAS_ETIOLOGY",  # 病因
+    # 疾病-机构
+    "BELONGS_TO_DEPARTMENT",  # 就诊科室
+    "TREATED_AT_HOSPITAL",  # 就诊医院
+    # 疾病-解剖部位及物质
+    "AFFECTS_SITE",  # 发病部位
+    # 疾病-预后
+    "HAS_PROGNOSIS",  # 预后
+    # 检查检验/治疗-医疗设备
+    "USES_EQUIPMENT",  # 使用于
+    # 通用
+    "BELONGS_TO",  # 属于（任意实体-任意实体）
+    # 语义
+    "HAS_ICD10_CODE",  # ICD10 编码
+    "HAS_SYNONYM",  # 别称
 ]
+
+# ==================== 中文↔英文映射表 ====================
+# 用于 LLM 返回中文类型时的规范化、前端展示、查询解析等
+
+# 实体类型：中文 → 英文
+ENTITY_TYPE_ZH_TO_EN = {
+    # 基础
+    "疾病": "Disease",
+    "症状或体征": "Symptom",
+    "症状": "Symptom",
+    "体征": "Symptom",
+    "群体": "Population",
+    "药物": "Medicine",
+    "预后": "Prognosis",
+    # 检查检验
+    "体格检查": "PhysicalExamination",
+    "实验室检查": "LaboratoryExamination",
+    "影像学检查": "ImagingExamination",
+    "病理检查": "PathologyExamination",
+    "其它检查": "OtherExamination",
+    "其他检查": "OtherExamination",
+    "异常检查结果": "AbnormalExaminationResult",
+    # 治疗
+    "中医治疗": "TCMTreatment",
+    "手术": "Surgery",
+    "药物治疗": "DrugTreatment",
+    "西医理疗": "WesternPhysicalTherapy",
+    "其它治疗": "OtherTreatment",
+    "其他治疗": "OtherTreatment",
+    # 解剖
+    "解剖部位": "AnatomicalSite",
+    "解剖物质": "AnatomicalSubstance",
+    # 设备
+    "医用设备": "MedicalEquipment",
+    "器械": "MedicalEquipment",
+    "医用设备、器械和材料": "MedicalEquipment",
+    # 机构
+    "医院": "Hospital",
+    "科室": "Department",
+    # 病因类
+    "基因": "Gene",
+    "微生物类": "Microorganism",
+    "微生物": "Microorganism",
+    "理化因素": "PhysicalChemicalFactor",
+    "心理行为": "PsychologicalBehavior",
+    "生活习惯": "Lifestyle",
+    "免疫因素": "ImmuneFactor",
+    "废用性因素": "DisuseFactor",
+    # 语义
+    "ICD10编码": "ICD10Code",
+    "ICD10 编码": "ICD10Code",
+    "同义词": "Synonym",
+    "别称": "Synonym",
+}
+
+# 实体类型：英文 → 中文（用于前端展示、日志等）
+ENTITY_TYPE_EN_TO_ZH = {
+    "Disease": "疾病",
+    "Symptom": "症状或体征",
+    "Population": "群体",
+    "Medicine": "药物",
+    "Prognosis": "预后",
+    "PhysicalExamination": "体格检查",
+    "LaboratoryExamination": "实验室检查",
+    "ImagingExamination": "影像学检查",
+    "PathologyExamination": "病理检查",
+    "OtherExamination": "其它检查",
+    "AbnormalExaminationResult": "异常检查结果",
+    "TCMTreatment": "中医治疗",
+    "Surgery": "手术",
+    "DrugTreatment": "药物治疗",
+    "WesternPhysicalTherapy": "西医理疗",
+    "OtherTreatment": "其它治疗",
+    "AnatomicalSite": "解剖部位",
+    "AnatomicalSubstance": "解剖物质",
+    "MedicalEquipment": "医用设备、器械和材料",
+    "Hospital": "医院",
+    "Department": "科室",
+    "Gene": "基因",
+    "Microorganism": "微生物类",
+    "PhysicalChemicalFactor": "理化因素",
+    "PsychologicalBehavior": "心理行为",
+    "Lifestyle": "生活习惯",
+    "ImmuneFactor": "免疫因素",
+    "DisuseFactor": "废用性因素",
+    "ICD10Code": "ICD10编码",
+    "Synonym": "同义词",
+}
+
+# 关系类型：中文 → 英文
+RELATION_TYPE_ZH_TO_EN = {
+    "异常检查结果": "HAS_ABNORMAL_EXAM_RESULT",  # 疾病-异常检查结果
+    "用于检查": "REQUIRES_EXAM",
+    "用于治疗": "TREATED_BY",
+    "用于预防": "PREVENTED_BY",
+    "治疗并发症": "TREATS_COMPLICATION",
+    "副作用": "HAS_SIDE_EFFECT",
+    "症状或体征": "HAS_SYMPTOM",
+    "多发人群": "AFFECTS_POPULATION",
+    "并发症": "HAS_COMPLICATION",
+    "鉴别诊断": "DIFFERENTIAL_DIAGNOSIS",
+    "病因": "HAS_ETIOLOGY",
+    "就诊科室": "BELONGS_TO_DEPARTMENT",
+    "就诊医院": "TREATED_AT_HOSPITAL",
+    "发病部位": "AFFECTS_SITE",
+    "预后": "HAS_PROGNOSIS",
+    "使用于": "USES_EQUIPMENT",
+    "属于": "BELONGS_TO",
+    "ICD10编码": "HAS_ICD10_CODE",
+    "ICD10 编码": "HAS_ICD10_CODE",
+    "别称": "HAS_SYNONYM",
+}
+
+# 关系类型：英文 → 中文
+RELATION_TYPE_EN_TO_ZH = {
+    "HAS_ABNORMAL_EXAM_RESULT": "异常检查结果",
+    "EXAM_HAS_ABNORMAL_RESULT": "检查-异常结果",
+    "REQUIRES_EXAM": "用于检查",
+    "TREATED_BY": "用于治疗",
+    "PREVENTED_BY": "用于预防",
+    "TREATS_COMPLICATION": "治疗并发症",
+    "HAS_SIDE_EFFECT": "副作用",
+    "HAS_SYMPTOM": "症状或体征",
+    "AFFECTS_POPULATION": "多发人群",
+    "HAS_COMPLICATION": "并发症",
+    "DIFFERENTIAL_DIAGNOSIS": "鉴别诊断",
+    "HAS_ETIOLOGY": "病因",
+    "BELONGS_TO_DEPARTMENT": "就诊科室",
+    "TREATED_AT_HOSPITAL": "就诊医院",
+    "AFFECTS_SITE": "发病部位",
+    "HAS_PROGNOSIS": "预后",
+    "USES_EQUIPMENT": "使用于",
+    "BELONGS_TO": "属于",
+    "HAS_ICD10_CODE": "ICD10编码",
+    "HAS_SYNONYM": "别称",
+}
+
+
+def resolve_entity_type(value: str) -> str:
+    """
+    将实体类型（中文或英文）解析为英文类型。
+    若已是英文且在 ENTITY_TYPES 中，直接返回；若为中文则查表映射；否则返回默认 Disease。
+    """
+    if not value or not isinstance(value, str):
+        return "Disease"
+    v = value.strip()
+    if v in ENTITY_TYPES:
+        return v
+    return ENTITY_TYPE_ZH_TO_EN.get(v, "Disease")
+
+
+def resolve_relation_type(value: str) -> str:
+    """
+    将关系类型（中文或英文）解析为英文类型。
+    若已是英文且在 RELATION_TYPES 中，直接返回；若为中文则查表映射；否则返回默认 BELONGS_TO。
+    """
+    if not value or not isinstance(value, str):
+        return "BELONGS_TO"
+    v = value.strip()
+    if v in RELATION_TYPES:
+        return v
+    return RELATION_TYPE_ZH_TO_EN.get(v, "BELONGS_TO")
+
+
+# ==================== 后处理校验配置 ====================
+
+# 实体名最小有效长度（字符数，中文按 1 字计）
+ENTITY_NAME_MIN_LEN = 2
+
+# 实体名黑名单：不应作为独立实体抽取的通用词（负样本提示）
+ENTITY_NAME_BLACKLIST = frozenset({
+    "患者", "病人", "患者主诉", "主诉", "今日", "一般情况", "可", "良好",
+    "正常", "无", "有", "是", "否", "等", "及", "或", "与", "和",
+    "该", "此", "其", "本", "上述", "如下", "例如", "如", "若",
+})
+
+# 关系语义约束：predicate -> (subject_types, object_types)，空集合表示不校验
+# 用于后处理时软校验，不匹配时打日志，不强制丢弃
+RELATION_SEMANTICS = {
+    "HAS_SYMPTOM": ({"Disease", "Symptom"}, {"Symptom"}),
+    "HAS_ABNORMAL_EXAM_RESULT": ({"Disease"}, {"AbnormalExaminationResult"}),
+    "EXAM_HAS_ABNORMAL_RESULT": (
+        {"PhysicalExamination", "LaboratoryExamination", "ImagingExamination", "PathologyExamination", "OtherExamination"},
+        {"AbnormalExaminationResult"},
+    ),
+    "REQUIRES_EXAM": ({"Disease", "Symptom"}, {"PhysicalExamination", "LaboratoryExamination", "ImagingExamination", "PathologyExamination", "OtherExamination"}),
+    "TREATED_BY": ({"Disease", "Symptom"}, {"Medicine", "TCMTreatment", "Surgery", "DrugTreatment", "WesternPhysicalTherapy", "OtherTreatment"}),
+    "PREVENTED_BY": ({"Disease", "Symptom"}, {"Medicine", "TCMTreatment", "Surgery", "DrugTreatment", "WesternPhysicalTherapy", "OtherTreatment"}),
+    "TREATS_COMPLICATION": ({"TCMTreatment", "Surgery", "DrugTreatment", "WesternPhysicalTherapy", "OtherTreatment"}, {"Disease"}),
+    "HAS_SIDE_EFFECT": ({"Medicine"}, {"Disease", "Symptom"}),
+    "AFFECTS_POPULATION": ({"Disease"}, {"Population"}),
+    "HAS_COMPLICATION": ({"Disease"}, {"Disease"}),
+    "DIFFERENTIAL_DIAGNOSIS": ({"Disease"}, {"Disease"}),
+    "HAS_ETIOLOGY": ({"Disease"}, {"Gene", "Microorganism", "PhysicalChemicalFactor", "PsychologicalBehavior", "Lifestyle", "ImmuneFactor", "DisuseFactor", "Disease", "Symptom"}),
+    "BELONGS_TO_DEPARTMENT": ({"Disease"}, {"Department"}),
+    "TREATED_AT_HOSPITAL": ({"Disease"}, {"Hospital"}),
+    "AFFECTS_SITE": ({"Disease"}, {"AnatomicalSite", "AnatomicalSubstance"}),
+    "HAS_PROGNOSIS": ({"Disease"}, {"Prognosis"}),
+    "USES_EQUIPMENT": (
+        {"PhysicalExamination", "LaboratoryExamination", "ImagingExamination", "PathologyExamination", "OtherExamination",
+         "TCMTreatment", "Surgery", "DrugTreatment", "WesternPhysicalTherapy", "OtherTreatment"},
+        {"MedicalEquipment"},
+    ),
+}
 
 
 # ==================== 配置验证 ====================

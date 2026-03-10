@@ -47,7 +47,7 @@ from backend.auth import _validate_jwt_secret_for_production
 import bcrypt
 from backend.patient_education_images import generate_section_images_glm
 
-# 尝试导入 Neo4j 客户端（可选，用于实体搜索）
+# 尝试导入 Neo4j 客户端（可选，用于实体搜索与知识图谱构建）
 neo4j_client = None
 try:
     from db.neo4j_client import Neo4jClient
@@ -59,6 +59,23 @@ try:
         logger.warning("Neo4j连接验证失败，实体搜索将回退到MySQL")
 except Exception as e:
     logger.warning(f"Neo4j客户端初始化失败: {e}，实体搜索将使用MySQL")
+
+
+def _ensure_neo4j_client():
+    """获取 Neo4j 客户端；若当前未连接则尝试重新连接（用于构建时 Neo4j 后启动的场景）"""
+    global neo4j_client
+    if neo4j_client is not None:
+        return neo4j_client
+    try:
+        from db.neo4j_client import Neo4jClient
+        client = Neo4jClient()
+        if client.verify_connection():
+            neo4j_client = client
+            logger.info("Neo4j 按需重连成功，可继续构建知识图谱")
+            return neo4j_client
+    except Exception as e:
+        logger.warning(f"Neo4j 按需重连失败: {e}")
+    return None
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -618,7 +635,7 @@ _TEMPLATE_SYMPTOM_CSV = "id,name,severity,description\nsymptom_001,症状名称,
 _TEMPLATE_MEDICINE_JSON = json.dumps({
     "drugs": [{"name": "药物名称", "type": "药物类型", "usage": "用法", "dosage": "剂量", "treats": ["可治疗的疾病"]}]
 }, ensure_ascii=False, indent=2)
-_TEMPLATE_RELATION_XML = '<?xml version="1.0" encoding="UTF-8"?>\n<knowledge-graph>\n  <relation>\n    <source>实体ID或名称</source>\n    <target>实体ID或名称</target>\n    <type>关系类型(如: has_symptom, treated_by)</type>\n  </relation>\n</knowledge-graph>\n'
+_TEMPLATE_RELATION_XML = '<?xml version="1.0" encoding="UTF-8"?>\n<knowledge-graph>\n  <relation>\n    <source>实体ID或名称</source>\n    <target>实体ID或名称</target>\n    <type>关系类型(如: HAS_SYMPTOM, TREATED_BY, REQUIRES_EXAM, HAS_COMPLICATION)</type>\n  </relation>\n</knowledge-graph>\n'
 
 _TEMPLATE_MAP = {
     "disease": (_TEMPLATE_DISEASE_JSON.encode("utf-8"), "疾病数据模板.json", "application/json"),
@@ -1665,7 +1682,9 @@ def build_kg_background(task_id: str, file_id: str, user_id: str = ""):
         }
 
         # 2. 调用真实图谱构建器（LLM 提取实体/关系 + Neo4j）
-        if not neo4j_client:
+        # 若启动时 Neo4j 未就绪，此处会尝试按需重连
+        client = _ensure_neo4j_client()
+        if not client:
             tasks[task_id] = {
                 "status": TaskStatus.FAILED,
                 "progress": 0,
@@ -1673,7 +1692,7 @@ def build_kg_background(task_id: str, file_id: str, user_id: str = ""):
                 "total_chunks": 0,
                 "entities_created": 0,
                 "relations_created": 0,
-                "message": "Neo4j 未连接，无法构建知识图谱",
+                "message": "Neo4j 未连接，无法构建知识图谱（请确认 Neo4j 已启动并重启后端）",
                 "current_processing": "",
                 "file_id": file_id
             }
@@ -1699,7 +1718,7 @@ def build_kg_background(task_id: str, file_id: str, user_id: str = ""):
 
         try:
             llm_client = LLMClient()
-            builder = KnowledgeGraphBuilder(neo4j_client=neo4j_client, llm_client=llm_client)
+            builder = KnowledgeGraphBuilder(neo4j_client=client, llm_client=llm_client)
             result = builder.process_text(text)
         except Exception as e:
             logger.exception("知识图谱构建执行失败")
@@ -2838,15 +2857,23 @@ def _search_graph_entities(keyword: str = "", node_type: str = "") -> List[Dict[
 
     # 查找匹配的实体
     for gi, graph in enumerate(graphs):
-        graph_data = graph.get("graph_data", {})
+        if not graph:
+            continue
+        graph_data = graph.get("graph_data") or {}
         if isinstance(graph_data, str):
             import json
-            graph_data = json.loads(graph_data)
+            try:
+                graph_data = json.loads(graph_data) or {}
+            except Exception:
+                graph_data = {}
 
-        nodes = graph_data.get("nodes", [])
+        nodes = graph_data.get("nodes", []) if isinstance(graph_data, dict) else []
 
         for ni, node in enumerate(nodes):
-            if node["id"] in node_ids:
+            if not isinstance(node, dict):
+                continue
+            node_id = node.get("id")
+            if node_id is None or node_id in node_ids:
                 continue
 
             # 将整个节点序列化成字符串，做一个"兜底"的模糊匹配
@@ -2859,11 +2886,13 @@ def _search_graph_entities(keyword: str = "", node_type: str = "") -> List[Dict[
             # 关键字匹配：节点整体文本中包含关键字即可
             match_keyword = (not keyword) or (keyword.lower() in node_text.lower())
 
-            # 类型匹配
-            match_type = not node_type or node_type == node.get("type")
+            # 类型匹配（支持 type 或 category，后端需兼容大小写）
+            node_cat = (node.get("type") or node.get("category") or "").lower()
+            type_lower = (node_type or "").lower()
+            match_type = not node_type or type_lower == node_cat
 
             if match_keyword and match_type:
-                node_ids.add(node["id"])
+                node_ids.add(node_id)
                 all_nodes.append(node)
 
     logger.info(
@@ -3051,18 +3080,28 @@ async def expand_entity(entity_id: str, params: Optional[Dict[str, Any]] = None)
 @app.get("/api/kg/build/progress/{task_id}", tags=["知识图谱构建"])
 async def get_kg_build_progress(task_id: str):
     """
-    获取单个文件知识图谱构建任务进度
+    获取单个文件知识图谱构建任务进度。
+    任务不存在时返回 200 + status=not_found，避免轮询时频繁触发 404 错误弹窗。
     """
     try:
         if task_id not in tasks:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            return {
+                "status": "not_found",
+                "task_id": task_id,
+                "progress": 0,
+                "current_chunk": 0,
+                "total_chunks": 0,
+                "entities_created": 0,
+                "relations_created": 0,
+                "message": "任务不存在或已过期（服务可能已重启）",
+                "current_processing": ""
+            }
         
         task = tasks[task_id]
         return {
-            "status": "success",
+            "status": task.get("status", "unknown"),
             "task_id": task_id,
             "progress": task.get("progress", 0),
-            "status": task.get("status", "unknown"),
             "current_chunk": task.get("current_chunk", 0),
             "total_chunks": task.get("total_chunks", 0),
             "entities_created": task.get("entities_created", 0),
@@ -3070,8 +3109,6 @@ async def get_kg_build_progress(task_id: str):
             "message": task.get("message", ""),
             "current_processing": task.get("current_processing", "")
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"获取任务进度失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取任务进度失败: {str(e)}")

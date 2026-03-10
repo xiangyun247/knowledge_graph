@@ -114,7 +114,7 @@ def test_backend_apis():
     try:
         response = requests.get(
             f"{BACKEND_URL}/api/graph/entities/search",
-            params={"keyword": "疾病", "entity_type": "Disease", "limit": 5},
+            params={"keyword": "疾病", "type": "Disease", "limit": 5},
             timeout=5
         )
         if response.status_code == 200:

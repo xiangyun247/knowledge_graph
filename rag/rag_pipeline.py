@@ -53,6 +53,20 @@ class RAGPipeline:
         self.max_graph_depth = config.MAX_GRAPH_DEPTH
         self.max_context_length = 3000  # 上下文最大长度
 
+        # 意图 → 优先检索的关系类型（表3）
+        self.intent_to_relations = {
+            "symptom": ["HAS_SYMPTOM"],
+            "treatment": ["TREATED_BY", "TREATS_COMPLICATION"],
+            "cause": ["HAS_ETIOLOGY"],
+            "diagnosis": ["REQUIRES_EXAM", "HAS_ABNORMAL_EXAM_RESULT"],
+            "prevention": ["PREVENTED_BY"],
+            "complication": ["HAS_COMPLICATION"],
+            "prognosis": ["HAS_PROGNOSIS"],
+            "population": ["AFFECTS_POPULATION"],
+            "department": ["BELONGS_TO_DEPARTMENT", "TREATED_AT_HOSPITAL"],
+            "comparison": ["DIFFERENTIAL_DIAGNOSIS"],
+        }
+
         logger.info("RAG 流水线初始化完成")
 
     def _get_chroma_store(self) -> Optional[Any]:
@@ -141,25 +155,44 @@ class RAGPipeline:
             }
 
     def _classify_intent(self, question: str) -> str:
-        """简单的意图分类"""
-        if any(word in question for word in ['症状', '表现', '怎么样']):
+        """简单的意图分类（与 QueryParser.intent_types 对齐）"""
+        q = question.lower()
+        if any(w in q for w in ['症状', '表现', '特征', '感觉', '体征']):
             return 'symptom_query'
-        elif any(word in question for word in ['治疗', '怎么治', '用药']):
+        elif any(w in q for w in ['治疗', '怎么治', '用药', '疗法', '手术']):
             return 'treatment_query'
-        elif any(word in question for word in ['科室', '挂号', '看什么科']):
+        elif any(w in q for w in ['科室', '挂号', '看什么科', '就诊']):
             return 'department_query'
+        elif any(w in q for w in ['预后', '恢复', '治愈', '能好吗']):
+            return 'prognosis_query'
+        elif any(w in q for w in ['多发', '人群', '哪些人', '好发于']):
+            return 'population_query'
+        elif any(w in q for w in ['原因', '为什么', '病因', '导致']):
+            return 'cause_query'
+        elif any(w in q for w in ['检查', '诊断', '确诊']):
+            return 'diagnosis_query'
+        elif any(w in q for w in ['并发症', '后果', '影响']):
+            return 'complication_query'
         else:
             return 'general_query'
 
     def _extract_entities(self, question: str) -> List[str]:
-        """简单的实体提取"""
+        """简单的实体提取（可复用 QueryParser 或扩展关键词）"""
         entities = []
-        # 这里可以集成更复杂的NER模型
-        # 简单实现：搜索已知疾病名
-        disease_keywords = ['胰腺炎', '糖尿病', '高血压', '急性胰腺炎', '慢性胰腺炎']
-        for keyword in disease_keywords:
-            if keyword in question:
-                entities.append(keyword)
+        keywords = [
+            '胰腺炎', '急性胰腺炎', '慢性胰腺炎', '重症急性胰腺炎',
+            '川崎病', '糖尿病', '高血压', '冠心病',
+        ]
+        for kw in keywords:
+            if kw in question:
+                entities.append(kw)
+        if not entities:
+            import re
+            words = re.findall(r'[\u4e00-\u9fa5]{2,6}', question)
+            for w in words:
+                if any(x in w for x in ['炎', '病', '症', '瘤']):
+                    entities.append(w)
+                    break
         return entities
 
     def _retrieve_knowledge(self, question: str, entities: List[str], top_k: int) -> List[Dict]:
@@ -183,16 +216,22 @@ class RAGPipeline:
                     )
 
                     for record in results:
-                        node = record['e']
-                        rel_type = record.get('rel_type')
-                        related = record.get('related')
+                        # Neo4jClient.execute_query() 返回的是普通 dict，而不是 neo4j.Node
+                        node = record.get("e") or {}
+                        rel_type = record.get("rel_type")
+                        related = record.get("related") or {}
+
+                        # labels 可能在 record["labels"]，也可能在节点属性里
+                        labels = record.get("labels") or node.get("labels") or []
+                        if not isinstance(labels, list):
+                            labels = [labels]
 
                         knowledge.append({
-                            'entity': node.get('name', ''),
-                            'type': list(node.labels)[0] if node.labels else 'Unknown',
-                            'properties': dict(node),
-                            'relation': rel_type,
-                            'related_entity': related.get('name', '') if related else None
+                            "entity": node.get("name", ""),
+                            "type": labels[0] if labels else "Unknown",
+                            "properties": node,
+                            "relation": rel_type,
+                            "related_entity": related.get("name") if related else None,
                         })
 
             # 如果没有实体或知识不足，使用关键词搜索
@@ -213,7 +252,7 @@ class RAGPipeline:
         if not knowledge:
             return "抱歉，我没有找到相关的医疗信息。请咨询专业医生。"
 
-        # 根据意图组织答案
+        # 根据意图组织答案（使用表3 关系类型）
         if intent == 'symptom_query':
             symptoms = [k for k in knowledge if k.get('relation') == 'HAS_SYMPTOM']
             if symptoms:
@@ -221,16 +260,40 @@ class RAGPipeline:
                 return f"根据医疗知识库，主要症状包括：{', '.join(symptom_list)}。建议及时就医。"
 
         elif intent == 'treatment_query':
-            treatments = [k for k in knowledge if k.get('relation') == 'TREATS']
+            treatments = [k for k in knowledge if k.get('relation') in ('TREATED_BY', 'TREATS_COMPLICATION')]
             if treatments:
-                drug_list = [t.get('entity', '') for t in treatments]
-                return f"常用治疗方法包括：{', '.join(drug_list)}。请遵医嘱用药。"
+                items = [t.get('related_entity') or t.get('entity', '') for t in treatments]
+                items = [x for x in items if x]
+                if items:
+                    return f"常用治疗方法包括：{', '.join(items)}。请遵医嘱用药。"
 
         elif intent == 'department_query':
-            departments = [k for k in knowledge if k.get('relation') == 'BELONGS_TO']
-            if departments:
-                dept_list = [d.get('related_entity', '') for d in departments if d.get('related_entity')]
-                return f"建议挂号科室：{', '.join(dept_list)}。"
+            depts = [k for k in knowledge if k.get('relation') in ('BELONGS_TO_DEPARTMENT', 'TREATED_AT_HOSPITAL')]
+            if depts:
+                dept_list = [d.get('related_entity', '') for d in depts if d.get('related_entity')]
+                if dept_list:
+                    return f"建议挂号科室：{', '.join(dept_list)}。"
+
+        elif intent == 'prognosis_query':
+            prog = [k for k in knowledge if k.get('relation') == 'HAS_PROGNOSIS']
+            if prog:
+                p_list = [p.get('related_entity', '') for p in prog if p.get('related_entity')]
+                if p_list:
+                    return f"预后情况：{', '.join(p_list)}。具体请咨询主治医生。"
+
+        elif intent == 'population_query':
+            pop = [k for k in knowledge if k.get('relation') == 'AFFECTS_POPULATION']
+            if pop:
+                p_list = [p.get('related_entity', '') for p in pop if p.get('related_entity')]
+                if p_list:
+                    return f"多发人群：{', '.join(p_list)}。"
+
+        elif intent == 'diagnosis_query':
+            exams = [k for k in knowledge if k.get('relation') in ('REQUIRES_EXAM', 'HAS_ABNORMAL_EXAM_RESULT')]
+            if exams:
+                e_list = [e.get('related_entity', '') for e in exams if e.get('related_entity')]
+                if e_list:
+                    return f"相关检查包括：{', '.join(e_list)}。"
 
         # 通用回答
         entity_info = knowledge[0]
@@ -384,15 +447,18 @@ class RAGPipeline:
         entity_names = [e["name"] for e in parsed_query.get("entities", [])]
         query_text = parsed_query.get("normalized_query", "")
 
-        # 1. 图检索
+        # 1. 图检索（按意图优先相关关系类型）
         if use_graph and entity_names:
-            logger.info(f"执行图检索: 实体={entity_names}")
+            intent = parsed_query.get("intent", "other")
+            preferred = self.intent_to_relations.get(intent)
+            logger.info(f"执行图检索: 实体={entity_names}, 意图={intent}")
             try:
                 graph_results = self.graph_retriever.retrieve(
                     query=query_text,
                     entity_names=entity_names,
                     max_depth=self.max_graph_depth,
-                    limit=top_k
+                    limit=top_k,
+                    preferred_relation_types=preferred,
                 )
                 logger.info(f"图检索返回 {len(graph_results)} 条结果")
                 all_results.extend(graph_results)
@@ -482,11 +548,14 @@ class RAGPipeline:
                         if graph_results:
                             logger.info("混合检索-图(MySQL 用户图谱): %d 条", len(graph_results))
                 if not graph_results:
+                    intent = parsed_query.get("intent", "other")
+                    preferred = self.intent_to_relations.get(intent)
                     graph_results = self.graph_retriever.retrieve(
                         query=query_text,
                         entity_names=entity_names,
                         max_depth=self.max_graph_depth,
                         limit=top_k_per_source,
+                        preferred_relation_types=preferred,
                     )
                     if graph_results:
                         logger.info("混合检索-图(Neo4j): %d 条", len(graph_results))

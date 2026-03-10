@@ -443,10 +443,17 @@ async def list_entities(
         limit: int = 100,
         client: Neo4jClient = Depends(get_neo4j_client)
 ):
-    """列出指定类型的实体"""
+    """列出指定类型的实体（entity_type 需在 config.ENTITY_TYPES 中）"""
     try:
+        from config import ENTITY_TYPES, resolve_entity_type
+        normalized = resolve_entity_type(entity_type)
+        if normalized not in ENTITY_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知实体类型: {entity_type}，支持: {', '.join(ENTITY_TYPES[:10])}..."
+            )
         entities = client.find_nodes(
-            label=entity_type,
+            label=normalized,
             limit=limit
         )
         return {
@@ -454,6 +461,8 @@ async def list_entities(
             "count": len(entities),
             "data": entities
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"查询实体失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
