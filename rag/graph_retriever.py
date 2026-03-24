@@ -696,9 +696,9 @@ if __name__ == "__main__":
         retriever = GraphRetriever(client)
 
         # 测试检索
-        test_entities = ["重症急性胰腺炎", "剧烈腹痛"]
+        test_entities = ["轻度认知障碍", "记忆减退"]
         results = retriever.retrieve(
-            query="重症急性胰腺炎有哪些症状？",
+            query="轻度认知障碍有哪些表现？",
             entity_names=test_entities,
             max_depth=2,
             limit=10

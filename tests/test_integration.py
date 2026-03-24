@@ -37,7 +37,7 @@ def test_backend_apis():
     try:
         response = requests.get(
             f"{BACKEND_URL}/api/search/entities",
-            params={"keyword": "胰腺炎", "limit": 10},
+            params={"keyword": "认知障碍", "limit": 10},
             timeout=5
         )
         if response.status_code == 200:

@@ -130,9 +130,15 @@ logger.add(
 
 @app.on_event("startup")
 async def _startup_security_check():
-    """启动时安全校验：生产环境 JWT_SECRET 必须正确配置。"""
+    """启动时安全校验与基础表结构检查。"""
     try:
         _validate_jwt_secret_for_production()
+        # 确保认知负荷评估相关数据表存在（行为事件 / 问卷结果）
+        try:
+            if mysql_client and hasattr(mysql_client, "ensure_cognitive_tables"):
+                mysql_client.ensure_cognitive_tables()
+        except Exception as e:  # pragma: no cover - 启动时的补充表结构不影响主流程
+            logger.warning(f"ensure_cognitive_tables 失败（可忽略，稍后可手动执行）: {e}")
     except ValueError as e:
         logger.error(str(e))
         raise
@@ -201,7 +207,6 @@ def log_api_event(user_id: str, api: str, status: str, elapsed_ms: int, **extra:
         logger.info(payload)
 
 
-# 初始化MySQL客户端（延迟加载）
 mysql_client = None
 try:
     mysql_client = get_mysql_client()
@@ -209,6 +214,289 @@ try:
 except Exception as e:
     logger.error(f"MySQL客户端初始化失败: {e}")
     logger.warning("应用将在没有MySQL的情况下运行，部分功能可能不可用（包括注册/登录）")
+
+
+# ==================== 认知负荷评估：后端持久化模型 ====================
+
+class CognitiveEventIn(BaseModel):
+    """认知负荷行为事件（前端上传）"""
+    ts: int = Field(..., description="事件时间戳（毫秒）")
+    event_type: str = Field(..., description="事件类型：task_start/task_end/step_view/back/click/submit_questionnaire 等")
+    task_id: Optional[str] = Field(None, description="任务ID，如 pe_xxx/chat_xxx")
+    session_id: Optional[str] = Field(None, description="会话ID（针对 Chat）")
+    source: Optional[str] = Field(None, description="来源：patient_education/chat 等")
+    params: Dict[str, Any] = Field(default_factory=dict, description="事件参数，前端 params 原样上传")
+
+
+class QuestionnaireAnswer(BaseModel):
+    qid: str = Field(..., description="题目ID")
+    value: int = Field(..., description="评分值，如 1~5")
+
+
+class CognitiveQuestionnaireIn(BaseModel):
+    """认知负荷问卷结果（前端上传）"""
+    ts: int = Field(..., description="提交时间戳（毫秒）")
+    task_id: str = Field(..., description="任务ID，与行为事件对应")
+    session_id: Optional[str] = Field(None, description="会话ID（针对 Chat）")
+    source: Optional[str] = Field(None, description="来源：patient_education/chat 等")
+    answers: List[QuestionnaireAnswer] = Field(default_factory=list, description="问卷答案数组")
+
+
+# ==================== 认知负荷评估：上传接口 ====================
+
+
+@app.post(
+    "/api/cognitive-load/events",
+    tags=["认知负荷"],
+    dependencies=[require_roles("admin", "doctor", "patient")],
+)
+async def upload_cognitive_events(req: List[CognitiveEventIn], request: Request):
+    """
+    批量上传认知负荷行为事件。
+    - 仅登录用户可用；
+    - 数据将写入 MySQL cognitive_events 表。
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置，无法保存认知负荷事件数据")
+    user_id = get_current_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录，无法保存认知负荷事件数据")
+    try:
+        # 确保表存在
+        if hasattr(mysql_client, "ensure_cognitive_tables"):
+            mysql_client.ensure_cognitive_tables()
+        query = """
+        INSERT INTO cognitive_events (user_id, task_id, session_id, source, event_type, ts, params_json)
+        VALUES (:user_id, :task_id, :session_id, :source, :event_type, :ts, :params_json)
+        """
+        import json as _json
+        count = 0
+        for ev in req or []:
+            params_json = _json.dumps(ev.params or {}, ensure_ascii=False)
+            mysql_client.execute_update(
+                query,
+                {
+                    "user_id": user_id,
+                    "task_id": ev.task_id or "",
+                    "session_id": ev.session_id or "",
+                    "source": ev.source or "",
+                    "event_type": ev.event_type,
+                    "ts": int(ev.ts),
+                    "params_json": params_json,
+                },
+            )
+            count += 1
+        return {"status": "success", "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("保存认知负荷事件失败")
+        raise HTTPException(status_code=500, detail=f"保存认知负荷事件失败: {e}")
+
+
+@app.post(
+    "/api/cognitive-load/questionnaires",
+    tags=["认知负荷"],
+    dependencies=[require_roles("admin", "doctor", "patient")],
+)
+async def upload_cognitive_questionnaires(req: List[CognitiveQuestionnaireIn], request: Request):
+    """
+    批量上传认知负荷问卷结果。
+    - 仅登录用户可用；
+    - 数据将写入 MySQL cognitive_questionnaires 表。
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置，无法保存认知负荷问卷数据")
+    user_id = get_current_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录，无法保存认知负荷问卷数据")
+    try:
+        # 确保表存在
+        if hasattr(mysql_client, "ensure_cognitive_tables"):
+            mysql_client.ensure_cognitive_tables()
+        query = """
+        INSERT INTO cognitive_questionnaires (user_id, task_id, session_id, source, ts, answers_json)
+        VALUES (:user_id, :task_id, :session_id, :source, :ts, :answers_json)
+        """
+        import json as _json
+        count = 0
+        for q in req or []:
+            answers_json = _json.dumps([a.dict() for a in (q.answers or [])], ensure_ascii=False)
+            mysql_client.execute_update(
+                query,
+                {
+                    "user_id": user_id,
+                    "task_id": q.task_id,
+                    "session_id": q.session_id or "",
+                    "source": q.source or "",
+                    "ts": int(q.ts),
+                    "answers_json": answers_json,
+                },
+            )
+            count += 1
+        return {"status": "success", "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("保存认知负荷问卷失败")
+        raise HTTPException(status_code=500, detail=f"保存认知负荷问卷失败: {e}")
+
+
+# ==================== 机构管理看板：认知负荷聚合统计 ====================
+
+
+@app.get(
+    "/api/admin/cognitive-dashboard",
+    tags=["管理看板"],
+    dependencies=[require_roles("admin", "doctor")],
+)
+async def admin_cognitive_dashboard(request: Request):
+    """
+    机构看板：返回全局认知负荷聚合统计数据。
+    仅 admin / doctor 可访问。
+    """
+    if not mysql_client:
+        raise HTTPException(status_code=503, detail="MySQL 未配置")
+
+    import json as _json
+
+    try:
+        if hasattr(mysql_client, "ensure_cognitive_tables"):
+            mysql_client.ensure_cognitive_tables()
+
+        # 1. 概览指标
+        overview_sql = """
+        SELECT
+            COUNT(*)                                         AS total_events,
+            COUNT(DISTINCT user_id)                          AS total_users,
+            COUNT(DISTINCT CASE WHEN event_type='task_start' THEN task_id END) AS total_tasks,
+            COUNT(DISTINCT DATE(FROM_UNIXTIME(ts/1000)))     AS active_days
+        FROM cognitive_events
+        """
+        ov_rows = mysql_client.execute_query(overview_sql)
+        ov = ov_rows[0] if ov_rows else {}
+
+        q_count_sql = "SELECT COUNT(*) AS total_questionnaires FROM cognitive_questionnaires"
+        q_rows = mysql_client.execute_query(q_count_sql)
+        total_q = (q_rows[0] if q_rows else {}).get("total_questionnaires", 0)
+
+        # 2. 按来源分布
+        source_sql = """
+        SELECT COALESCE(NULLIF(source,''),'unknown') AS source, COUNT(*) AS cnt
+        FROM cognitive_events GROUP BY source ORDER BY cnt DESC
+        """
+        source_rows = mysql_client.execute_query(source_sql)
+
+        # 3. 按事件类型分布
+        type_sql = """
+        SELECT event_type, COUNT(*) AS cnt
+        FROM cognitive_events GROUP BY event_type ORDER BY cnt DESC
+        """
+        type_rows = mysql_client.execute_query(type_sql)
+
+        # 4. 近 14 天每日活跃（事件数 + 活跃用户数）
+        daily_sql = """
+        SELECT DATE(FROM_UNIXTIME(ts/1000)) AS day,
+               COUNT(*)                     AS events,
+               COUNT(DISTINCT user_id)      AS users
+        FROM cognitive_events
+        WHERE ts >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 14 DAY))*1000
+        GROUP BY day ORDER BY day
+        """
+        daily_rows = mysql_client.execute_query(daily_sql)
+
+        # 5. 问卷平均分（按来源）
+        avg_sql = """
+        SELECT COALESCE(NULLIF(source,''),'unknown') AS source, answers_json
+        FROM cognitive_questionnaires
+        """
+        avg_rows = mysql_client.execute_query(avg_sql)
+        source_scores = {}
+        for r in avg_rows:
+            src = r.get("source") or "unknown"
+            answers = r.get("answers_json") or []
+            if isinstance(answers, str):
+                try:
+                    answers = _json.loads(answers)
+                except Exception:
+                    answers = []
+            for a in answers:
+                val = a.get("value")
+                if isinstance(val, (int, float)):
+                    source_scores.setdefault(src, []).append(val)
+        avg_by_source = []
+        for src, vals in source_scores.items():
+            avg_by_source.append({
+                "source": src,
+                "avg_score": round(sum(vals) / len(vals), 2) if vals else 0,
+                "count": len(vals)
+            })
+
+        # 6. task_end 事件的平均时长（按来源）
+        dur_sql = """
+        SELECT COALESCE(NULLIF(source,''),'unknown') AS source, params_json
+        FROM cognitive_events WHERE event_type='task_end'
+        """
+        dur_rows = mysql_client.execute_query(dur_sql)
+        source_durations = {}
+        for r in dur_rows:
+            src = r.get("source") or "unknown"
+            p = r.get("params_json") or {}
+            if isinstance(p, str):
+                try:
+                    p = _json.loads(p)
+                except Exception:
+                    p = {}
+            dur = p.get("duration_ms")
+            if isinstance(dur, (int, float)) and dur > 0:
+                source_durations.setdefault(src, []).append(dur)
+        avg_duration_by_source = []
+        for src, vals in source_durations.items():
+            avg_duration_by_source.append({
+                "source": src,
+                "avg_duration_ms": round(sum(vals) / len(vals)),
+                "count": len(vals)
+            })
+
+        # 7. 用户排行（前 10）
+        user_sql = """
+        SELECT user_id,
+               COUNT(*) AS events,
+               COUNT(DISTINCT CASE WHEN event_type='task_start' THEN task_id END) AS tasks
+        FROM cognitive_events
+        GROUP BY user_id ORDER BY events DESC LIMIT 10
+        """
+        user_rows = mysql_client.execute_query(user_sql)
+
+        return {
+            "status": "success",
+            "data": {
+                "overview": {
+                    "total_events": ov.get("total_events", 0),
+                    "total_users": ov.get("total_users", 0),
+                    "total_tasks": ov.get("total_tasks", 0),
+                    "total_questionnaires": total_q,
+                    "active_days": ov.get("active_days", 0),
+                },
+                "by_source": [{"source": r["source"], "count": r["cnt"]} for r in source_rows],
+                "by_event_type": [{"event_type": r["event_type"], "count": r["cnt"]} for r in type_rows],
+                "daily_trend": [
+                    {"day": str(r["day"]), "events": r["events"], "users": r["users"]}
+                    for r in daily_rows
+                ],
+                "avg_score_by_source": avg_by_source,
+                "avg_duration_by_source": avg_duration_by_source,
+                "top_users": [
+                    {"user_id": r["user_id"], "events": r["events"], "tasks": r["tasks"]}
+                    for r in user_rows
+                ],
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("机构看板数据查询失败")
+        raise HTTPException(status_code=500, detail=f"看板数据查询失败: {e}")
 
 
 # ==================== 简单用户与认证相关工具 ====================
@@ -734,7 +1022,7 @@ class RefreshTokenRequest(BaseModel):
 
 class UpdateRoleRequest(BaseModel):
     """个人中心修改身份（角色）请求体"""
-    role: str = Field(..., description="新角色：admin / doctor / patient")
+    role: str = Field(..., description="新角色：admin / doctor / patient / elderly")
 
 
 @app.put("/api/user/role", tags=["用户"])
@@ -748,8 +1036,8 @@ async def update_user_role(request: Request, body: UpdateRoleRequest):
         raise HTTPException(status_code=401, detail="请先登录")
 
     role = (body.role or "").strip().lower()
-    if role not in ("admin", "doctor", "patient"):
-        raise HTTPException(status_code=400, detail="角色必须是 admin、doctor 或 patient 之一")
+    if role not in ("admin", "doctor", "patient", "elderly"):
+        raise HTTPException(status_code=400, detail="角色必须是 admin、doctor、patient 或 elderly 之一")
 
     _ensure_users_table()
     rows = mysql_client.execute_query(

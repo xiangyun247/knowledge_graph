@@ -15,22 +15,23 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# 患者教育 Prompt 模板（参考 UpToDate 患者教育风格）
-PATIENT_EDUCATION_PROMPT = """你是一名擅长用通俗语言向普通患者解释疾病的消化科医生。
+# 患者教育 Prompt 模板（参考 UpToDate 患者教育风格，M19：认知照护侧重点）
+PATIENT_EDUCATION_PROMPT = """你是一名擅长用通俗语言向老年患者及照护者解释疾病的医生，侧重认知照护与低认知负荷表达。
 
 【写作目标】
 - 为「{topic}」写一篇中文患者教育短文。
-- 读者是刚被告知诊断、希望了解病情和自我管理的患者及家属。
+- 读者是老年患者及家属/照护者，希望了解病情和自我管理。
 - 语言要求：通俗、短句、尽量少用专业术语；如必须使用，请在括号中简单解释。
 - 语气要求：温和、鼓励，避免夸大风险或引起恐慌。
-- 字数建议：800~1200 字左右。
+- 字数建议：800~1200 字左右；每段控制在 80 字以内，每条只讲一个要点；可自然拆成「第一步…第二步…」便于分步阅读。
+- 优先覆盖认知照护高频主题：服药提醒、复诊准备、日常安全（防跌倒/防走失）、记忆与病情简述、家属沟通要点等。
 
 【结构要求】
 请严格按照以下结构组织内容：
 1. 这是什么病？（或：这是在讲什么问题？）
 2. 常见症状/表现
 3. 什么时候需要尽快就医或联系医生
-4. 日常注意事项与自我管理（如饮食、休息、用药、复查等）
+4. 日常注意事项与自我管理（如饮食、休息、用药、复查等；可拆成第一步、第二步…）
 5. 温馨提示（用1~2句话做结尾，安抚和鼓励）
 
 【可参考的医学要点】
@@ -83,6 +84,12 @@ def _get_graph_context(topic: str, max_length: int = 2500) -> str:
         # 从 topic 中提取实体名（简单：用 Neo4j search_entities）
         ents = nc.search_entities(topic, limit=5)
         names = [e.get("name") or "" for e in ents if e.get("name")]
+        if not names:
+            # M20：无命中时用认知照护相关词再试，使患者教育默认更贴照护场景
+            for fallback_term in ("认知障碍", "照护", "服药"):
+                ents = nc.search_entities(fallback_term, limit=2)
+                names.extend([e.get("name") or "" for e in ents if e.get("name")])
+            names = list(dict.fromkeys(n for n in names if n))[:5]
         if not names:
             names = [topic.strip()[:20]]  # 回退：用 topic 前段作为检索词
         res = gr.retrieve(query=topic, entity_names=names, max_depth=2, limit=15)
@@ -171,6 +178,51 @@ def _strip_asterisks(text: str) -> str:
     return s.strip()
 
 
+# 分步版规范：每步一句短句，可选配图说明；最多 5–7 步；每步字数上限 30 字（便于低认知负荷「一次只显示一步」）
+STEP_MAX_COUNT = 7
+STEP_MAX_CHARS = 30
+
+
+def _derive_steps_from_sections(sections: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """从 sections 派生出分步列表：每步一句短句、最多 STEP_MAX_COUNT 步、每步最多 STEP_MAX_CHARS 字。"""
+    steps: List[Dict[str, str]] = []
+    for sec in (sections or []):
+        heading = (sec.get("heading") or "").strip()
+        content = (sec.get("content") or "").strip()
+        # 按句切分：。！？；\n
+        raw_sentences = re.split(r"[。！？；\n]+", content)
+        for s in raw_sentences:
+            s = s.strip()
+            if not s:
+                continue
+            # 若过长则按 STEP_MAX_CHARS 截断为多步
+            while len(s) > STEP_MAX_CHARS:
+                steps.append({"text": s[:STEP_MAX_CHARS].strip(), "image_caption": ""})
+                s = s[STEP_MAX_CHARS:].strip()
+            if s:
+                steps.append({"text": s, "image_caption": ""})
+            if len(steps) >= STEP_MAX_COUNT:
+                return steps
+        if heading and len(steps) < STEP_MAX_COUNT:
+            short = heading if len(heading) <= STEP_MAX_CHARS else heading[:STEP_MAX_CHARS]
+            if short not in [x.get("text") for x in steps]:
+                steps.append({"text": short, "image_caption": ""})
+            if len(steps) >= STEP_MAX_COUNT:
+                return steps
+    return steps[:STEP_MAX_COUNT]
+
+
+def _derive_cards_from_sections(sections: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """从 sections 派生出卡片列表：每小节对应一张卡片，大字号/高对比度展示用。"""
+    cards: List[Dict[str, str]] = []
+    for sec in (sections or []):
+        cards.append({
+            "title": (sec.get("heading") or "").strip(),
+            "content": (sec.get("content") or "").strip(),
+        })
+    return cards
+
+
 def generate_patient_education(
     topic: str,
     context_snippets: Optional[List[str]] = None,
@@ -247,9 +299,15 @@ def generate_patient_education(
     summary = _strip_asterisks(parsed.get("summary") or "")
     share_text = _strip_asterisks(parsed.get("share_text") or "")
 
+    # 知识装饰：同一内容多形态呈现（M6/M7）
+    steps = _derive_steps_from_sections(out_sections)
+    cards = _derive_cards_from_sections(out_sections)
+
     return {
         "title": str(title),
         "sections": out_sections,
         "summary": str(summary),
         "share_text": str(share_text),
+        "steps": steps,
+        "cards": cards,
     }

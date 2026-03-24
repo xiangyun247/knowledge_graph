@@ -1,5 +1,5 @@
 """
-胰腺炎知识图谱RAG系统 - 应用启动入口
+智护银龄：老龄认知障碍人群低认知负荷知识辅助系统 - 应用启动入口
 使用 uvicorn 启动 FastAPI 应用
 """
 
@@ -55,7 +55,7 @@ def check_dependencies():
 def start_server():
     """启动服务器"""
     logger.info("\n" + "=" * 60)
-    logger.info("正在启动胰腺炎知识图谱RAG系统...")
+    logger.info("正在启动智护银龄·忆路康知识辅助系统...")
     logger.info("=" * 60)
 
     # 显示配置摘要
@@ -71,6 +71,14 @@ def start_server():
         sys.exit(1)
 
     logger.info("\n✓ 依赖检查通过")
+
+    # 预加载本地 Embedding 模型（如配置为使用本地向量）
+    try:
+        from llm.client import EmbeddingClient
+        _ = EmbeddingClient()
+        logger.info("✓ 本地 Embedding 模型预加载完成（如 USE_LOCAL_EMBEDDING=True）")
+    except Exception as e:
+        logger.warning("⚠ 本地 Embedding 模型预加载失败（首次使用相关功能时会再次尝试加载）: %s", e)
 
     # Agent（Chat）可用性：失败仅告警，不阻塞启动
     try:

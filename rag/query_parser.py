@@ -86,6 +86,9 @@ class QueryParser:
                 rule_result
             )
 
+            # 5. M20：无明确疾病/实体时，偏向认知照护关键词以提升默认检索贴合度
+            result = self._apply_cognitive_care_bias(result)
+
             logger.info(f"查询解析完成: 实体={len(result['entities'])}, 意图={result['intent']}")
             logger.debug(f"解析结果: {result}")
 
@@ -380,6 +383,22 @@ class QueryParser:
 
         return merged
 
+    def _apply_cognitive_care_bias(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        M20：在无明确疾病/实体或置信度较低时，为默认检索注入认知照护相关关键词，
+        使图+向量检索结果更贴近认知障碍、照护、服药、记忆等场景。
+        """
+        entities = result.get("entities") or []
+        keywords = list(result.get("keywords") or [])
+        confidence = result.get("confidence", 0)
+        cognitive_care_terms = ["认知障碍", "照护", "服药", "记忆", "日常安全", "复诊"]
+        if len(entities) == 0 or confidence < 0.5:
+            for term in cognitive_care_terms:
+                if term not in keywords:
+                    keywords.append(term)
+            result["keywords"] = keywords[:10]
+        return result
+
     def _deduplicate_entities(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         实体去重
@@ -484,11 +503,11 @@ if __name__ == "__main__":
 
     # 测试查询
     test_queries = [
-        "什么是重症急性胰腺炎？",
-        "胰腺炎有哪些症状？",
-        "如何治疗急性胰腺炎？",
-        "为什么会得胰腺炎？",
-        "胰腺炎需要做哪些检查？"
+        "什么是轻度认知障碍？",
+        "认知障碍老人日常要注意什么？",
+        "如何降低老人使用产品时的认知负荷？",
+        "阿尔茨海默病有哪些早期表现？",
+        "记忆减退老人需要做哪些检查？"
     ]
 
     for query in test_queries:

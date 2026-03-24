@@ -242,7 +242,7 @@ class KnowledgeGraphBuilder:
     def _normalize_entity_name(name: str) -> str:
         """
         实体名规范化：strip、全角转半角、多余空格合并。
-        便于同义合并（如「急性 胰腺炎」与「急性胰腺炎」视为同一实体）。
+        便于同义合并（如「轻度 认知障碍」与「轻度认知障碍」视为同一实体）。
         """
         if not name or not isinstance(name, str):
             return ""
@@ -542,6 +542,32 @@ class KnowledgeGraphBuilder:
 }}
 
 【示例 5】
+输入文本：轻度认知障碍老人日常需注意记忆减退与定向力下降，应按时服药、防跌倒防走失，复诊前带齐病历与用药清单。
+输出：
+{{
+  "entities": [
+    {{"name": "轻度认知障碍", "type": "Disease", "description": "疾病"}},
+    {{"name": "记忆减退", "type": "Symptom", "description": "症状"}},
+    {{"name": "定向力下降", "type": "Symptom", "description": "症状"}},
+    {{"name": "服药", "type": "Lifestyle", "description": "照护行为"}},
+    {{"name": "防跌倒", "type": "Lifestyle", "description": "照护要点"}},
+    {{"name": "防走失", "type": "Lifestyle", "description": "照护要点"}},
+    {{"name": "复诊", "type": "Lifestyle", "description": "照护行为"}},
+    {{"name": "病历", "type": "Other", "description": "资料"}},
+    {{"name": "用药清单", "type": "Other", "description": "资料"}}
+  ],
+  "relations": [
+    {{"subject": "轻度认知障碍", "predicate": "HAS_SYMPTOM", "object": "记忆减退"}},
+    {{"subject": "轻度认知障碍", "predicate": "HAS_SYMPTOM", "object": "定向力下降"}},
+    {{"subject": "轻度认知障碍", "predicate": "TREATED_BY", "object": "服药"}},
+    {{"subject": "轻度认知障碍", "predicate": "TREATED_BY", "object": "防跌倒"}},
+    {{"subject": "轻度认知障碍", "predicate": "TREATED_BY", "object": "防走失"}},
+    {{"subject": "复诊", "predicate": "REQUIRES_EXAM", "object": "病历"}},
+    {{"subject": "复诊", "predicate": "REQUIRES_EXAM", "object": "用药清单"}}
+  ]
+}}
+
+【示例 6】
 输入文本：患者今日一般情况可。
 输出：
 {{"entities": [], "relations": []}}
@@ -797,9 +823,9 @@ if __name__ == "__main__":
 
         # 测试文本
         test_text = """
-        重症急性胰腺炎是一种严重的胰腺炎症。
-        患者会出现剧烈腹痛和发热。
-        治疗方法包括禁食禁水和静脉营养支持。
+        轻度认知障碍是介于正常衰老与痴呆之间的阶段。
+        患者可能出现记忆减退、执行功能下降等表现。
+        日常照护需注意规律作息、防跌倒与按时服药。
         """
 
         # 处理文本

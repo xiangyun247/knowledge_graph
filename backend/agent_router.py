@@ -77,6 +77,7 @@ class AgentQueryRequest(BaseModel):
     model: Optional[str] = Field(None, description="多 LLM 支持：模型 id，如 deepseek-chat、qwen-plus，需在 .env 配置 API Key")
     deep_think: bool = Field(False, description="是否返回「深度思考」分析 trace")
     intent: Optional[str] = Field(None, description="意图：patient_education/science_tweet 时直接生成对应内容")
+    answer_style: Optional[str] = Field(None, description="回答风格：concise 时返回三步以内简要版，供低认知负荷偏好使用（M9）")
 
 
 class ScienceTweetRequest(BaseModel):
@@ -307,6 +308,7 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
                 user_id=user_id,
                 model_id=req.model,
                 deep_think=req.deep_think,
+                answer_style=req.answer_style,
             ),
         )
     except Exception as e:
@@ -464,6 +466,7 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
                 user_id=user_id,
                 model_id=req.model,
                 deep_think=req.deep_think,
+                answer_style=req.answer_style,
             ):
                 if ev.get("type") == "done" and req.session_id and req.session_id.strip():
                     append_session_exchange(req.session_id, req.question, ev.get("answer", ""))

@@ -1,0 +1,128 @@
+[
+  {
+    "id": "cs_001",
+    "text": "轻度认知障碍老人日常需注意记忆减退与定向力下降，应按时服药、防跌倒防走失，复诊前带齐病历与用药清单。",
+    "entities": [
+      { "id": "e1", "text": "轻度认知障碍", "type": "disease" },
+      { "id": "e2", "text": "记忆减退", "type": "symptom" },
+      { "id": "e3", "text": "定向力下降", "type": "symptom" },
+      { "id": "e4", "text": "服药", "type": "treatment" },
+      { "id": "e5", "text": "防跌倒", "type": "lifestyle" },
+      { "id": "e6", "text": "防走失", "type": "lifestyle" },
+      { "id": "e7", "text": "复诊", "type": "treatment" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_symptom" },
+      { "subject": "e1", "object": "e3", "type": "has_symptom" },
+      { "subject": "e1", "object": "e4", "type": "has_treatment" },
+      { "subject": "e1", "object": "e5", "type": "has_treatment" },
+      { "subject": "e1", "object": "e6", "type": "has_treatment" },
+      { "subject": "e7", "object": "e1", "type": "related_to" }
+    ]
+  },
+  {
+    "id": "cs_002",
+    "text": "认知障碍老人服药时应核对药名与剂量，用温开水送服，按医嘱时间服用，并做简单记录；不要擅自停药或改量。",
+    "entities": [
+      { "id": "e1", "text": "认知障碍", "type": "disease" },
+      { "id": "e2", "text": "服药", "type": "treatment" },
+      { "id": "e3", "text": "药名与剂量", "type": "other" },
+      { "id": "e4", "text": "温开水送服", "type": "treatment" },
+      { "id": "e5", "text": "医嘱", "type": "other" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "has_treatment" },
+      { "subject": "e2", "object": "e3", "type": "requires" },
+      { "subject": "e2", "object": "e4", "type": "has_treatment" },
+      { "subject": "e2", "object": "e5", "type": "follows" }
+    ]
+  },
+  {
+    "id": "cs_003",
+    "text": "防跌倒要点包括家中通道畅通、地面防滑、光线充足、常用物品放在易取处；外出尽量有人陪同。",
+    "entities": [
+      { "id": "e1", "text": "防跌倒", "type": "lifestyle" },
+      { "id": "e2", "text": "通道畅通", "type": "lifestyle" },
+      { "id": "e3", "text": "地面防滑", "type": "lifestyle" },
+      { "id": "e4", "text": "光线充足", "type": "lifestyle" },
+      { "id": "e5", "text": "外出陪同", "type": "lifestyle" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "includes" },
+      { "subject": "e1", "object": "e3", "type": "includes" },
+      { "subject": "e1", "object": "e4", "type": "includes" },
+      { "subject": "e1", "object": "e5", "type": "includes" }
+    ]
+  },
+  {
+    "id": "cs_004",
+    "text": "神经心理量表如 MMSE、MoCA 可用于轻度认知障碍的筛查与随访；头颅 MRI 或 CT、血液生化有助于排除其他病因。",
+    "entities": [
+      { "id": "e1", "text": "MMSE", "type": "examination" },
+      { "id": "e2", "text": "MoCA", "type": "examination" },
+      { "id": "e3", "text": "轻度认知障碍", "type": "disease" },
+      { "id": "e4", "text": "头颅 MRI", "type": "examination" },
+      { "id": "e5", "text": "CT", "type": "examination" },
+      { "id": "e6", "text": "血液生化", "type": "examination" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e3", "type": "used_for" },
+      { "subject": "e2", "object": "e3", "type": "used_for" },
+      { "subject": "e4", "object": "e3", "type": "used_for" },
+      { "subject": "e5", "object": "e3", "type": "used_for" },
+      { "subject": "e6", "object": "e3", "type": "used_for" }
+    ]
+  },
+  {
+    "id": "cs_005",
+    "text": "家属与认知障碍老人沟通时宜放慢语速、一次只说一件事、多用肯定与鼓励，避免一次给太多选项。",
+    "entities": [
+      { "id": "e1", "text": "家属", "type": "population" },
+      { "id": "e2", "text": "认知障碍老人", "type": "population" },
+      { "id": "e3", "text": "沟通", "type": "lifestyle" },
+      { "id": "e4", "text": "放慢语速", "type": "lifestyle" },
+      { "id": "e5", "text": "肯定与鼓励", "type": "lifestyle" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "communicates_with" },
+      { "subject": "e3", "object": "e4", "type": "includes" },
+      { "subject": "e3", "object": "e5", "type": "includes" }
+    ]
+  },
+  {
+    "id": "cs_006",
+    "text": "复诊前应带齐病历本和近期检查单，列出近期症状或疑问，准备好当前用药清单，家属尽量陪同。",
+    "entities": [
+      { "id": "e1", "text": "复诊", "type": "treatment" },
+      { "id": "e2", "text": "病历本", "type": "other" },
+      { "id": "e3", "text": "检查单", "type": "other" },
+      { "id": "e4", "text": "用药清单", "type": "other" },
+      { "id": "e5", "text": "家属陪同", "type": "lifestyle" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "requires" },
+      { "subject": "e1", "object": "e3", "type": "requires" },
+      { "subject": "e1", "object": "e4", "type": "requires" },
+      { "subject": "e1", "object": "e5", "type": "recommends" }
+    ]
+  },
+  {
+    "id": "cs_007",
+    "text": "日常照护应注重规律作息、按时服药防漏服、防跌倒与走失，并尽量简化信息呈现以降低认知负荷。",
+    "entities": [
+      { "id": "e1", "text": "日常照护", "type": "lifestyle" },
+      { "id": "e2", "text": "规律作息", "type": "lifestyle" },
+      { "id": "e3", "text": "按时服药", "type": "treatment" },
+      { "id": "e4", "text": "防跌倒", "type": "lifestyle" },
+      { "id": "e5", "text": "防走失", "type": "lifestyle" },
+      { "id": "e6", "text": "认知负荷", "type": "symptom" }
+    ],
+    "relations": [
+      { "subject": "e1", "object": "e2", "type": "includes" },
+      { "subject": "e1", "object": "e3", "type": "includes" },
+      { "subject": "e1", "object": "e4", "type": "includes" },
+      { "subject": "e1", "object": "e5", "type": "includes" },
+      { "subject": "e1", "object": "e6", "type": "reduces" }
+    ]
+  }
+]

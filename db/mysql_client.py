@@ -755,6 +755,52 @@ class MySQLClient:
             })
         return result
 
+    # ---------- 认知负荷评估数据表（行为事件 / 问卷结果） ----------
+    def ensure_cognitive_tables(self):
+        """
+        创建认知负荷评估相关数据表（若不存在则创建，已存在时忽略），包括：
+        - cognitive_events: 行为事件
+        - cognitive_questionnaires: 问卷结果
+        """
+        # 行为事件表
+        create_events_sql = """
+        CREATE TABLE IF NOT EXISTS cognitive_events (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '事件ID',
+            user_id VARCHAR(64) NOT NULL COMMENT '用户ID',
+            task_id VARCHAR(128) DEFAULT NULL COMMENT '任务ID，如 pe_xxx/chat_xxx',
+            session_id VARCHAR(128) DEFAULT NULL COMMENT '会话ID（针对 Chat）',
+            source VARCHAR(64) DEFAULT NULL COMMENT '来源：patient_education/chat 等',
+            event_type VARCHAR(64) NOT NULL COMMENT '事件类型：task_start/task_end/step_view/back/click/submit_questionnaire 等',
+            ts BIGINT NOT NULL COMMENT '事件时间戳（毫秒）',
+            params_json JSON NULL COMMENT '事件参数，前端 params 原样存储',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+            KEY idx_cog_events_user (user_id),
+            KEY idx_cog_events_task (task_id),
+            KEY idx_cog_events_source (source),
+            KEY idx_cog_events_ts (ts)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认知负荷评估-行为事件';
+        """
+        self.execute_update(create_events_sql)
+
+        # 问卷结果表
+        create_q_sql = """
+        CREATE TABLE IF NOT EXISTS cognitive_questionnaires (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '问卷记录ID',
+            user_id VARCHAR(64) NOT NULL COMMENT '用户ID',
+            task_id VARCHAR(128) NOT NULL COMMENT '任务ID，与行为事件对应',
+            session_id VARCHAR(128) DEFAULT NULL COMMENT '会话ID（针对 Chat）',
+            source VARCHAR(64) DEFAULT NULL COMMENT '来源：patient_education/chat 等',
+            ts BIGINT NOT NULL COMMENT '提交时间戳（毫秒）',
+            answers_json JSON NOT NULL COMMENT '问卷答案数组，如 [{qid, value}, ...]',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+            KEY idx_cog_q_user (user_id),
+            KEY idx_cog_q_task (task_id),
+            KEY idx_cog_q_source (source),
+            KEY idx_cog_q_ts (ts)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='认知负荷评估-问卷结果';
+        """
+        self.execute_update(create_q_sql)
+
 # 单例模式
 mysql_client = None
 

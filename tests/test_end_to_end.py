@@ -218,7 +218,7 @@ class EndToEndTester:
         print_subheader("测试实体搜索功能")
         
         test_cases = [
-            {"keyword": "胰腺炎", "entity_type": "Disease"},
+            {"keyword": "认知障碍", "entity_type": "Disease"},
             {"keyword": "疼痛", "entity_type": "Symptom"},
             {"keyword": "血常规", "entity_type": "LaboratoryExamination"},
         ]
@@ -273,8 +273,8 @@ class EndToEndTester:
         print_subheader("测试智能问答功能")
         
         test_questions = [
-            "急性胰腺炎有什么症状？",
-            "如何治疗急性胰腺炎？",
+            "轻度认知障碍有什么表现？",
+            "认知障碍老人日常要注意什么？",
         ]
         
         success_count = 0

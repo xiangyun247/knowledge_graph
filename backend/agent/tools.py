@@ -179,7 +179,7 @@ def graph_retrieve(
     """
     从医学知识图谱中检索与给定实体相关的多跳邻居、关系路径、子图。适合回答：某病的症状/并发症/用药/检查、实体间关系、病因链等。
     请优先使用本工具获取「来自图谱」的医学实体与关系，再结合 doc_search 的文献做回答。
-    参数：query 为用户问题或检索意图；entity_names 为已知实体名，多个用逗号分隔（如「胰腺炎,腹痛」），空时尝试从 query 推断；max_depth 建议 1~2，过深易噪声；limit 默认 10。
+    参数：query 为用户问题或检索意图；entity_names 为已知实体名，多个用逗号分隔（如「轻度认知障碍,记忆减退」），空时尝试从 query 推断；max_depth 建议 1~2，过深易噪声；limit 默认 10。
     """
     gr = _graph_retriever_impl()
     if gr is None:
@@ -191,6 +191,18 @@ def graph_retrieve(
             try:
                 ents = nc.search_entities(query, limit=5)
                 names = [e.get("name") or "" for e in ents if e.get("name")]
+            except Exception:
+                pass
+    # M20：无明确实体时使用认知照护相关默认词做一次检索，使默认结果更贴认知照护场景
+    if not names:
+        _fallback = ["认知障碍", "照护", "服药", "记忆"]
+        nc = _neo4j_client()
+        if nc:
+            try:
+                for term in _fallback:
+                    ents = nc.search_entities(term, limit=2)
+                    names.extend([e.get("name") or "" for e in ents if e.get("name")])
+                names = list(dict.fromkeys(n for n in names if n))[:5]
             except Exception:
                 pass
     if not names:
@@ -210,7 +222,7 @@ def entity_search(
 ) -> str:
     """
     按关键词在知识图谱中查找实体（疾病、症状、药物、治疗、检查等）。用于：确认实体是否存在、获取实体类型与简述、为 graph_retrieve 提供 entity_names。与 graph_retrieve 配合：先 entity_search 定实体，再 graph_retrieve 查关系。
-    参数：keyword 必填，如「胰腺炎」「二甲双胍」；node_type 可选，如 Disease/Symptom/Medicine/Department/LaboratoryExamination 等（见 config.ENTITY_TYPES），空为全部；limit 默认 10。
+    参数：keyword 必填，如「轻度认知障碍」「记忆减退」；node_type 可选，如 Disease/Symptom/Medicine/Department/LaboratoryExamination 等（见 config.ENTITY_TYPES），空为全部；limit 默认 10。
     """
     nc = _neo4j_client()
     if nc:
@@ -506,7 +518,7 @@ def generate_patient_education(
 ) -> str:
     """
     生成患者教育短文。当用户要求「患者教育」「写一篇给患者看的说明」「通俗解释给患者」等时使用。
-    参数：topic 为主题，如「急性胰腺炎出院后注意事项」；context_snippets 可选，为额外上下文片段（多段用双换行分隔），空则自动从图谱和文献检索。
+    参数：topic 为主题，如「轻度认知障碍老人居家注意事项」；context_snippets 可选，为额外上下文片段（多段用双换行分隔），空则自动从图谱和文献检索。
     输出：结构化的患者教育内容，含标题、分节、温馨提示。
     """
     from .patient_education import generate_patient_education as _gen

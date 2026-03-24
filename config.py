@@ -569,7 +569,7 @@ def validate_config():
 def print_config_summary():
     """打印配置摘要"""
     print("\n" + "=" * 60)
-    print(f"🚀 胰腺炎知识图谱RAG系统 v{VERSION}")
+    print(f"🚀 智护银龄·忆路康知识辅助系统 v{VERSION}")
     print("=" * 60)
     print(f"🌐 服务地址: http://{HOST}:{PORT}")
     print(f"🗄️  Neo4j: {NEO4J_URI}")

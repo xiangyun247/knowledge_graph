@@ -1,5 +1,5 @@
 """
-胰腺炎知识图谱RAG系统 - FastAPI 应用主文件
+智护银龄·忆路康知识辅助系统 - FastAPI 应用主文件
 提供 RESTful API 接口
 """
 
@@ -103,8 +103,8 @@ async def lifespan(app: FastAPI):
 # ==================== 创建应用 ====================
 
 app = FastAPI(
-    title="胰腺炎知识图谱RAG系统",
-    description="基于知识图谱的医学问答系统",
+    title="智护银龄·忆路康知识辅助系统",
+    description="基于知识图谱与认知负荷的老龄认知障碍人群低认知负荷知识辅助",
     version=config.VERSION,
     debug=config.DEBUG,
     lifespan=lifespan
@@ -134,7 +134,7 @@ class QueryRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "question": "什么是重症急性胰腺炎？",
+                "question": "轻度认知障碍老人日常需要注意什么？",
                 "use_graph": True,
                 "use_vector": True,
                 "top_k": 5
@@ -157,10 +157,10 @@ class QueryResponse(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "question": "什么是重症急性胰腺炎？",
-                "answer": "重症急性胰腺炎（SAP）是急性胰腺炎的严重类型...",
+                "question": "轻度认知障碍老人日常需要注意什么？",
+                "answer": "轻度认知障碍老人日常需注意规律作息、按时服药、防跌倒与走失等...",
                 "sources": [
-                    {"type": "Disease", "name": "重症急性胰腺炎", "relevance": 0.95}
+                    {"type": "Disease", "name": "轻度认知障碍", "relevance": 0.95}
                 ],
                 "confidence": 0.9,
                 "processing_time": 1.23
@@ -222,7 +222,7 @@ def get_neo4j_client() -> Neo4jClient:
 async def root():
     """根路径"""
     return {
-        "name": "胰腺炎知识图谱RAG系统",
+        "name": "智护银龄·忆路康知识辅助系统",
         "version": config.VERSION,
         "status": "running",
         "endpoints": {

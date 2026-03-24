@@ -64,43 +64,33 @@ def create_schema(client: Neo4jClient):
 
 def import_initial_data(kg_builder: KnowledgeGraphBuilder):
     """导入初始数据"""
-    logger.info("正在导入胰腺炎知识数据...")
+    logger.info("正在导入示例知识数据...")
 
-    # 初始知识数据
+    # 初始知识数据（老年认知障碍相关示例）
     initial_knowledge = """
-    重症急性胰腺炎（SAP）是一种严重的胰腺炎症。
+    轻度认知障碍（MCI）是介于正常衰老与痴呆之间的阶段。
 
-    主要症状包括：
-    - 剧烈腹痛
-    - 恶心呕吐
-    - 发热
-    - 腹胀
+    常见表现包括：
+    - 记忆减退
+    - 执行功能下降
+    - 注意力不集中
+    - 定向力轻度受损
 
-    常用治疗方法：
-    - 禁食禁水
-    - 静脉营养支持
-    - 抗生素治疗
-    - 镇痛治疗
+    日常照护要点：
+    - 规律作息
+    - 按时服药、防漏服
+    - 防跌倒与走失
+    - 简化信息呈现、降低认知负荷
 
-    常用药物包括：
-    - 奥美拉唑（抑制胃酸）
-    - 头孢类抗生素
-    - 生长抑素
-
-    需要的检查：
-    - 血淀粉酶检查
-    - CT扫描
-    - 超声检查
-
-    可能的并发症：
-    - 胰腺坏死
-    - 感染
-    - 多器官功能衰竭
+    可进行的检查：
+    - 神经心理量表（如 MMSE、MoCA）
+    - 头颅 MRI/CT
+    - 血液生化
 
     风险因素：
-    - 胆结石
-    - 酗酒
-    - 高脂血症
+    - 高龄
+    - 遗传
+    - 心血管危险因素
     """
 
     try:
@@ -110,6 +100,17 @@ def import_initial_data(kg_builder: KnowledgeGraphBuilder):
     except Exception as e:
         logger.error(f"❌ 数据导入失败: {e}")
         raise
+
+    # 可选：加载老年认知障碍扩展示例知识（用于演示与测试）
+    sample_path = project_root / "data" / "cognitive_care_sample_knowledge.txt"
+    if sample_path.exists():
+        try:
+            extra = sample_path.read_text(encoding="utf-8").strip()
+            if extra:
+                kg_builder.process_text(extra)
+                logger.info("✓ 老年认知障碍示例知识（cognitive_care_sample_knowledge.txt）导入完成")
+        except Exception as e:
+            logger.warning("⚠ 加载 cognitive_care_sample_knowledge.txt 失败（可忽略）: %s", e)
 
 
 def main():

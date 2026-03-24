@@ -180,7 +180,7 @@ class RAGPipeline:
         """简单的实体提取（可复用 QueryParser 或扩展关键词）"""
         entities = []
         keywords = [
-            '胰腺炎', '急性胰腺炎', '慢性胰腺炎', '重症急性胰腺炎',
+            '轻度认知障碍', '阿尔茨海默', '记忆减退', '老年痴呆',
             '川崎病', '糖尿病', '高血压', '冠心病',
         ]
         for kw in keywords:
@@ -854,7 +854,7 @@ class RAGPipeline:
 
     def _build_system_prompt(self, intent: str) -> str:
         """构建系统提示词"""
-        base_prompt = "你是一个专业的医学问答助手，擅长回答胰腺炎相关问题。"
+        base_prompt = "你是一个专业的医学问答助手，擅长回答老年认知障碍、认知负荷与日常照护相关问题。"
 
         intent_prompts = {
             "definition": "请用简洁准确的语言解释医学概念。",
@@ -946,9 +946,9 @@ if __name__ == "__main__":
         )
 
         test_queries = [
-            "什么是重症急性胰腺炎？",
-            "胰腺炎有哪些症状？",
-            "如何治疗急性胰腺炎？"
+            "什么是轻度认知障碍？",
+            "认知障碍老人日常要注意什么？",
+            "如何降低老人使用产品时的认知负荷？"
         ]
 
         for query in test_queries:

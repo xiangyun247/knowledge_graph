@@ -5,7 +5,7 @@ LangGraph Agent 本地运行脚本
 
 用法（项目根目录）:
   python scripts/run_agent_cli.py
-  python scripts/run_agent_cli.py "胰腺炎有哪些症状？"
+  python scripts/run_agent_cli.py "轻度认知障碍老人日常要注意什么？"
 
 需要环境变量: DEEPSEEK_API_KEY（可选 DEEPSEEK_BASE_URL, DEEPSEEK_MODEL）
 """
@@ -22,7 +22,7 @@ def main():
     if not os.getenv("DEEPSEEK_API_KEY"):
         print("请设置环境变量 DEEPSEEK_API_KEY 后再运行。", file=sys.stderr)
         sys.exit(1)
-    question = (sys.argv[1] if len(sys.argv) > 1 else "胰腺炎有哪些症状？").strip()
+    question = (sys.argv[1] if len(sys.argv) > 1 else "轻度认知障碍老人日常要注意什么？").strip()
     from backend.agent import run_agent
     print("问题:", question)
     print("-" * 50)
