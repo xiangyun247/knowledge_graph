@@ -64,28 +64,28 @@ def start_server():
     # 检查依赖
     issues = check_dependencies()
     if issues:
-        logger.error("\n⚠️  启动前检查发现问题:")
+        logger.error("\n[Warning] 启动前检查发现问题:")
         for issue in issues:
-            logger.error(f"  ❌ {issue}")
+            logger.error(f"  [Error] {issue}")
         logger.error("\n请解决上述问题后再启动服务\n")
         sys.exit(1)
 
-    logger.info("\n✓ 依赖检查通过")
+    logger.info("\n[OK] 依赖检查通过")
 
     # 预加载本地 Embedding 模型（如配置为使用本地向量）
     try:
         from llm.client import EmbeddingClient
         _ = EmbeddingClient()
-        logger.info("✓ 本地 Embedding 模型预加载完成（如 USE_LOCAL_EMBEDDING=True）")
+        logger.info("[OK] 本地 Embedding 模型预加载完成（如 USE_LOCAL_EMBEDDING=True）")
     except Exception as e:
-        logger.warning("⚠ 本地 Embedding 模型预加载失败（首次使用相关功能时会再次尝试加载）: %s", e)
+        logger.warning("[Warn] 本地 Embedding 模型预加载失败（首次使用相关功能时会再次尝试加载）: %s", e)
 
     # Agent（Chat）可用性：失败仅告警，不阻塞启动
     try:
         from backend.agent import run_agent
-        logger.info("✓ Agent 模块加载成功（Chat 可用）")
+        logger.info("[OK] Agent 模块加载成功（Chat 可用）")
     except Exception as e:
-        logger.warning("⚠ Agent 模块加载失败，/api/agent/query 与 /api/agent/query/stream 将返回 503: %s", e)
+        logger.warning("[Warn] Agent 模块加载失败，/api/agent/query 与 /api/agent/query/stream 将返回 503: %s", e)
         logger.warning("  请检查: pip install langgraph langchain-openai langchain-core；.env 中 DEEPSEEK_API_KEY")
 
     # Chroma（文档知识库）可用性：失败仅告警，不阻塞启动
@@ -93,16 +93,16 @@ def start_server():
         from backend.chroma_store import ChromaStore
         _s = ChromaStore()
         _ = _s._collection.count()
-        logger.info("✓ Chroma 模块加载成功（文档知识库可用）")
+        logger.info("[OK] Chroma 模块加载成功（文档知识库可用）")
     except Exception as e:
         err = str(e)
-        logger.warning("⚠ Chroma 模块加载失败，/api/kb/documents/* 将返回 500: %s", e)
+        logger.warning("[Warn] Chroma 模块加载失败，/api/kb/documents/* 将返回 500: %s", e)
         if "np.float_" in err or "NumPy 2.0" in err:
             logger.warning("  请执行: pip install 'numpy<2'   # Chroma 0.4.x 与 NumPy 2 不兼容")
         else:
             logger.warning("  请检查: pip install chromadb 'numpy<2'；若为 Embedding 失败可再检查 sentence-transformers")
 
-    logger.info(f"\n🚀 正在启动服务器...")
+    logger.info(f"\n[Start] 正在启动服务器...")
     logger.info(f"   地址: http://{config.HOST}:{config.PORT}")
     logger.info(f"   环境: {config.ENVIRONMENT}")
     logger.info(f"   调试模式: {'开启' if config.DEBUG else '关闭'}")
@@ -118,7 +118,7 @@ def start_server():
     elif (project_root / "api" / "main.py").exists():
         app_path = "api.main:app"
     else:
-        logger.error("❌ 找不到 FastAPI 应用文件")
+        logger.error("[Error] 找不到 FastAPI 应用文件")
         logger.error("   请确保存在以下文件之一:")
         logger.error("   - app_combined.py")
         logger.error("   - backend/app.py")
@@ -144,9 +144,9 @@ def start_server():
             # ssl_certfile="path/to/cert.pem",
         )
     except KeyboardInterrupt:
-        logger.info("\n\n⏹️  服务器已停止")
+        logger.info("\n\n[Stop] 服务器已停止")
     except Exception as e:
-        logger.error(f"\n❌ 服务器启动失败: {e}")
+        logger.error(f"\n[Error] 服务器启动失败: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

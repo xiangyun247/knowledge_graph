@@ -16,19 +16,20 @@ import jwt
 from fastapi import Request, HTTPException, Depends
 from pydantic import BaseModel
 
-# 从环境变量读取，未配置时使用默认值（生产环境务必设置 JWT_SECRET）
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
+# 从环境变量读取 JWT_SECRET，必须设置
+_jwt_secret_env = os.getenv("JWT_SECRET")
+if not _jwt_secret_env:
+    raise RuntimeError(
+        "JWT_SECRET 环境变量未设置，拒绝启动。"
+        "请设置至少 32 位的强随机字符串作为 JWT 密钥。"
+    )
+if len(_jwt_secret_env) < 32:
+    raise RuntimeError(
+        f"JWT_SECRET 太短（当前 {len(_jwt_secret_env)} 位），"
+        "必须至少 32 位"
+    )
+JWT_SECRET = _jwt_secret_env
 JWT_ALG = "HS256"
-
-
-def _validate_jwt_secret_for_production() -> None:
-    """生产环境下校验 JWT_SECRET，禁止使用默认值。"""
-    if os.getenv("ENVIRONMENT", "development").lower() == "production":
-        if not JWT_SECRET or JWT_SECRET == "change-me-in-production" or len(JWT_SECRET) < 32:
-            raise ValueError(
-                "生产环境必须设置 JWT_SECRET（至少 32 位强随机字符串），"
-                "且不能使用默认值 change-me-in-production"
-            )
 ACCESS_EXPIRES_SEC = int(os.getenv("JWT_ACCESS_EXPIRES", "3600"))  # 1 小时
 REFRESH_EXPIRES_SEC = int(os.getenv("JWT_REFRESH_EXPIRES", "604800"))  # 7 天
 

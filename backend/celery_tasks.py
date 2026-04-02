@@ -6,77 +6,38 @@ Celery 任务定义
 
 """
 
-
-
 import os
-
 import sys
-
 import logging
-
 from typing import Dict, Any, Optional
-
 from pathlib import Path
 
-
-
-# 添加项目根目录到 Python 路径
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 project_root = Path(__file__).parent.parent
-
 sys.path.insert(0, str(project_root))
 
-
-
 try:
-
     from backend.celery_app import celery_app
-
 except ImportError:
-
-    # 如果在项目根目录运行,可能需要调整导入路�?
-
     sys.path.insert(0, str(project_root.parent) if project_root.parent.exists() else str(project_root))
-
     from backend.celery_app import celery_app
 
-# 如果 celery_app 为 None，说明 Celery 初始化失败，任务装饰器将无法使用
-# 这种情况下，任务定义仍然可以存在，但不会被执行
 if celery_app is None:
     logger.warning("Celery 应用未初始化，Celery 任务将不可用")
 
-# 配置日志
-
-logging.basicConfig(
-
-    level=logging.INFO,
-
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-
-)
-
-logger = logging.getLogger(__name__)
-
-
-
 try:
-
     from hadoop.utils.hdfs_client import HDFSClient
-
 except ImportError:
-
     HDFSClient = None
-
     logger.warning("HDFSClient 导入失败,HDFS 功能将不可用")
 
-
-
-# 全局变量(延迟初始�?
-
 neo4j_client = None
-
 llm_client = None
-
 embedding_client = None
 
 kg_builder = None

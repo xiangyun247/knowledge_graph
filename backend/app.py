@@ -43,7 +43,6 @@ from backend.auth import (
     require_roles,
 )
 from backend.auth import ACCESS_EXPIRES_SEC
-from backend.auth import _validate_jwt_secret_for_production
 import bcrypt
 from backend.patient_education_images import generate_section_images_glm
 
@@ -109,7 +108,13 @@ _cors_origins = os.getenv(
     "CORS_ORIGINS",
     "http://localhost:8080,http://127.0.0.1:8080,http://localhost:5002,http://127.0.0.1:5002,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"
 ).strip()
-CORS_ORIGINS_LIST = [o.strip() for o in _cors_origins.split(",") if o.strip()] if _cors_origins != "*" else ["*"]
+
+if _cors_origins == "*":
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise RuntimeError("生产环境 CORS_ORIGINS 不能设为 *，必须明确配置允许的域名")
+    CORS_ORIGINS_LIST = ["*"]
+else:
+    CORS_ORIGINS_LIST = [o.strip() for o in _cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS_LIST,
@@ -132,11 +137,12 @@ logger.add(
 async def _startup_security_check():
     """启动时安全校验与基础表结构检查。"""
     try:
-        _validate_jwt_secret_for_production()
-        # 确保认知负荷评估相关数据表存在（行为事件 / 问卷结果）
+        # JWT_SECRET 校验已在 backend.auth 模块导入时完成
         try:
             if mysql_client and hasattr(mysql_client, "ensure_cognitive_tables"):
                 mysql_client.ensure_cognitive_tables()
+            if mysql_client and hasattr(mysql_client, "ensure_eeg_tables"):
+                mysql_client.ensure_eeg_tables()
         except Exception as e:  # pragma: no cover - 启动时的补充表结构不影响主流程
             logger.warning(f"ensure_cognitive_tables 失败（可忽略，稍后可手动执行）: {e}")
     except ValueError as e:
@@ -681,6 +687,33 @@ knowledge_bases: Dict[str, Dict[str, Any]] = {}
 DEFAULT_KB_ID = "default"
 DEFAULT_KB_NAME = "我的知识库"
 
+# =============== 注册 routers 包中的路由 ===============
+# TODO: 拆分 app.py 后启用（当前 app.py 内置了完整路由，与 routers/ 路径重复会冲突）
+# try:
+#     from backend.routers import (
+#         home_router,
+#         history_router,
+#         kg_router,
+#         graph_router,
+#         auth_router,
+#         cognitive_router,
+#         kb_router,
+#         search_router,
+#         templates_router,
+#     )
+#     app.include_router(home_router)
+#     app.include_router(history_router)
+#     app.include_router(kg_router)
+#     app.include_router(graph_router)
+#     app.include_router(auth_router)
+#     app.include_router(cognitive_router)
+#     app.include_router(kb_router)
+#     app.include_router(search_router)
+#     app.include_router(templates_router)
+#     logger.info("routers 包路由注册成功 (9个路由模块)")
+# except Exception as e:
+#     logger.warning(f"routers 包路由注册失败: {e}")
+
 # 尝试注册 Hadoop 集成 API 路由
 try:
     from backend.hadoop_api import router as hadoop_router
@@ -705,6 +738,14 @@ try:
 except Exception as e:
     logger.warning(f"Agent 问答 API 路由注册失败: {e}, Chat Agent 问答将不可用")
 
+# 注册认知负荷评估 API（/api/cognitive-load/*）
+try:
+    from backend.cognitive.router import router as cognitive_router
+    app.include_router(cognitive_router)
+    logger.info("认知负荷评估 API 路由注册成功 (/api/cognitive-load/*)")
+except Exception as e:
+    logger.warning(f"认知负荷评估 API 路由注册失败: {e}, 相关功能将不可用")
+
 # 注册多模态 API（TTS、STT、OCR）
 try:
     from backend.multimodal_router import router as multimodal_router
@@ -712,6 +753,14 @@ try:
     logger.info("多模态 API 路由注册成功 (TTS/STT/OCR)")
 except Exception as e:
     logger.warning(f"多模态 API 路由注册失败: {e}, TTS/STT/OCR 将不可用")
+
+# 注册 EEG 会话管理 API（受试者管理、监测会话）
+try:
+    from backend.eeg_session_router import router as eeg_session_router
+    app.include_router(eeg_session_router)
+    logger.info("EEG 会话管理 API 路由注册成功 (/api/eeg-session/*)")
+except Exception as e:
+    logger.warning(f"EEG 会话管理 API 路由注册失败: {e}, 相关功能将不可用")
 
 # =============== 首页仪表盘统计与数据模板下载 ===============
 

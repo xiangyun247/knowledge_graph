@@ -12,40 +12,64 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Any
 import mysql.connector
 from mysql.connector import Error
+from mysql.connector.pooling import MySQLConnectionPool
 from config import Config
 from loguru import logger
+
+POOL_NAME = "kg_pool"
+POOL_SIZE = 10
+
+_pool = None
+
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        cfg = Config()
+        _pool = MySQLConnectionPool(
+            pool_name=POOL_NAME,
+            pool_size=POOL_SIZE,
+            pool_reset_session=True,
+            host=cfg.MYSQL_HOST,
+            port=cfg.MYSQL_PORT,
+            user=cfg.MYSQL_USER,
+            password=cfg.MYSQL_PASSWORD,
+            database=cfg.MYSQL_DATABASE,
+        )
+        logger.info(f"MySQL 连接池已创建 (pool_size={POOL_SIZE})")
+    return _pool
 
 
 class MySQLClient:
     """
     MySQL客户端类，用于连接MySQL数据库并执行操作
     """
-    
+
     def __init__(self):
         """初始化MySQL客户端"""
         self.config = Config()
         self.connection = None
         self.cursor = None
+        self._pool = _get_pool()
         self.connect()
         self.create_tables()
-    
+
     def connect(self):
-        """连接到MySQL数据库"""
+        """从连接池获取连接"""
         try:
-            self.connection = mysql.connector.connect(
-                host=self.config.MYSQL_HOST,
-                port=self.config.MYSQL_PORT,
-                user=self.config.MYSQL_USER,
-                password=self.config.MYSQL_PASSWORD,
-                database=self.config.MYSQL_DATABASE
-            )
-            
+            self.connection = self._pool.get_connection()
             if self.connection.is_connected():
-                logger.info(f"成功连接到MySQL数据库: {self.config.MYSQL_DATABASE}")
+                logger.info(f"从连接池获取MySQL连接: {self.config.MYSQL_DATABASE}")
                 self.cursor = self.connection.cursor(dictionary=True)
         except Error as e:
             logger.error(f"MySQL连接失败: {e}")
             raise
+
+    def _ensure_connection(self):
+        """确保连接有效，无效时自动重连"""
+        if not self.connection or not self.connection.is_connected():
+            self.close()
+            self.connect()
     
     def create_tables(self):
         """创建必要的数据库表"""
@@ -85,6 +109,46 @@ class MySQLClient:
             
             self.cursor.execute(history_table_query)
             self.cursor.execute(knowledge_graph_table_query)
+
+            eeg_subjects_table_query = """
+            CREATE TABLE IF NOT EXISTS eeg_subjects (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                subject_code VARCHAR(50) UNIQUE NOT NULL,
+                name VARCHAR(100),
+                age INT NOT NULL,
+                gender ENUM('male', 'female') NOT NULL,
+                cognitive_status ENUM('normal', 'mci', 'dementia') DEFAULT 'normal',
+                remark TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """
+
+            eeg_sessions_table_query = """
+            CREATE TABLE IF NOT EXISTS eeg_sessions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                subject_id INT NOT NULL,
+                start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                end_time TIMESTAMP NULL,
+                duration_seconds INT DEFAULT 0,
+                avg_score DECIMAL(5,4) DEFAULT 0,
+                avg_theta_beta DECIMAL(8,4) DEFAULT 0,
+                avg_alpha_beta DECIMAL(8,4) DEFAULT 0,
+                avg_theta_power DECIMAL(8,4) DEFAULT 0,
+                avg_alpha_power DECIMAL(8,4) DEFAULT 0,
+                avg_beta_power DECIMAL(8,4) DEFAULT 0,
+                avg_snr DECIMAL(8,4) DEFAULT 0,
+                score_trend JSON,
+                cognitive_level ENUM('low', 'medium', 'high') DEFAULT 'medium',
+                session_note TEXT,
+                status ENUM('active', 'completed', 'aborted') DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (subject_id) REFERENCES eeg_subjects(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """
+
+            self.cursor.execute(eeg_subjects_table_query)
+            self.cursor.execute(eeg_sessions_table_query)
             self.connection.commit()
             logger.info("MySQL表创建成功")
         except Error as e:
@@ -93,12 +157,19 @@ class MySQLClient:
             raise
     
     def close(self):
-        """关闭数据库连接"""
+        """关闭数据库连接（归还到连接池）"""
         if self.cursor:
-            self.cursor.close()
-        if self.connection and self.connection.is_connected():
-            self.connection.close()
-            logger.info("MySQL连接已关闭")
+            try:
+                self.cursor.close()
+            except Error:
+                pass
+            self.cursor = None
+        if self.connection:
+            try:
+                self.connection.close()
+            except Error:
+                pass
+            self.connection = None
     
     # ==================== 历史记录相关方法 ====================
     

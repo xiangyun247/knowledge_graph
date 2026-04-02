@@ -28,6 +28,10 @@ paddleocr>=2.7.0  # 光学字符识别
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 slowapi>=0.1.9
+# EEG 硬件支持 (Muse S / Lab Streaming Layer)
+pylsl>=1.16.0  # LSL 协议，用于连接 EEG 硬件
+scipy>=1.11.0  # 信号处理（频段功率计算）
+mne>=1.5.0  # EEG 数据读取（支持 EDF 等格式）
 # 测试
 pytest>=7.0.0
 pytest-cov>=4.0.0

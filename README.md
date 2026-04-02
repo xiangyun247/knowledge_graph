@@ -2,25 +2,35 @@
 
 ## 项目简介
 
-本项目对应大创主题**「智护银龄 —— 基于 AI 与认知负荷的老龄认知障碍人群低认知负荷知识辅助」**，是一个面向老龄认知障碍人群的低认知负荷知识辅助与患者教育系统。系统基于知识图谱与大模型，实现从 PDF/文本到知识图谱的全流程构建，并通过基于 LangGraph 的 Agent 架构进行智能问答：Agent 编排 LLM 与多种工具（图谱检索、文献检索等），支持多轮对话、指代消解与流式输出，为照护者与机构提供可溯源的认知照护与患者教育支持。
+本项目是一个面向老龄认知障碍人群的多模态认知负荷量化评估与低认知负荷知识辅助系统。系统基于知识图谱与大模型，实现从 PDF/文本到知识图谱的全流程构建，并通过基于 LangGraph 的 Agent 架构进行智能问答。同时，系统集成行为分析、NASA-TLX主观问卷与EEG生理信号（预留）三大模态，实现认知负荷的多维度量化评估。
 
 ### 核心功能
 
-✅ **知识图谱生成**：支持从 PDF、纯文本、JSON 等多种数据源生成医学知识图谱  
-✅ **Agent 智能问答**：基于 LangGraph 的 Agent 架构，LLM 自主调用 RAG 工具（图检索、向量检索、混合检索），支持多轮对话与 session 记忆  
-✅ **RAG 作为工具**：原 RAG 流水线封装为 Agent 可调用的工具，融合图检索、向量检索与文献检索，由 Agent 决策何时调用、如何组合  
+✅ **知识图谱生成**：支持从 PDF、纯文本、JSON 等多种数据源生成医学知识图谱
+✅ **Agent 智能问答**：基于 LangGraph 的 Agent 架构，LLM 自主调用 RAG 工具（图检索、向量检索、混合检索），支持多轮对话与 session 记忆
+✅ **RAG 作为工具**：原 RAG 流水线封装为 Agent 可调用的工具，融合图检索、向量检索与文献检索，由 Agent 决策何时调用、如何组合
+✅ **多模态认知负荷评估**：行为埋点 + NASA-TLX主观问卷 + **EEG支持（模拟器+真实硬件）**，多模态加权融合量化认知负荷
+✅ **NASA-TLX问卷评估**：简化版NASA-TLX六维度评分（脑力/体力/时间需求、绩效、努力、挫败感），适老化设计
+✅ **行为分析评分**：基于点击/回退/错误/耗时等行为特征的实时认知负荷评估
+✅ **EEG硬件支持**：预留Muse/OpenBCI/Emotiv等主流设备接口，**已实现Muse S模拟器和真实硬件对接**，支持个体基线校准
+✅ **融合评估报告**：单次评估报告 + 趋势分析报告 + 周期汇总报告，多维度雷达图与个性化建议  
 ✅ **分布式处理**：基于 Hadoop 的分布式文本处理，支持大规模数据  
 ✅ **异步任务管理**：基于 Celery 的异步任务队列，支持批量任务处理  
 ✅ **多数据库支持**：Neo4j 图数据库 + MySQL 关系型数据库，实现数据持久化  
 ✅ **RESTful API**：完整的 API 服务，支持知识图谱查询、认证（注册/登录）、历史记录（分页与最多 1000 条）、图谱按 graph_id 查询、文档知识库（Chroma）等  
 ✅ **历史记录**：统一存储问答、图谱查询、图谱构建、上传等记录；支持列表（type/status/limit/offset）、保存、状态更新、搜索；删除（单条/批量/清空）接口已补全  
 ✅ **Docker 容器化**：全系统容器化，支持快速部署和环境一致性
-✅ **认知负荷评估闭环（M10/M11/M12）**：行为埋点（task_start/task_end/back/click 等）+ 小问卷（1-5）→ 前端趋势图/波动报告 → 可上传 MySQL
+✅ **认知负荷评估闭环**：行为埋点 + NASA-TLX问卷 → 前端趋势图/雷达图报告 → MySQL持久化
 ✅ **机构看板（P3）**：管理员/医生可查看跨用户聚合统计（事件、任务、问卷、活跃趋势、来源对比）
 ✅ **适老角色支持（elderly）**：角色更新接口支持 `elderly`，前端可切换到“老人简化模式”与适老主题
 
 ### 最近更新（智能体 & 多模态）
 
+- **EEG硬件支持完整实现**：新增 `eeg_collector.py`（Muse S数据采集）、`eeg_hardware_scorer.py`（Muse S评分器）、`eeg_simulator.py`（开发测试模拟器）、`modes.py`（运行模式配置）；支持模拟器模式和真实Muse S硬件模式切换
+- **多模态认知负荷评估**：新增认知负荷评估模块 `backend/cognitive/`，集成行为分析、NASA-TLX问卷、EEG预留接口，支持多模态加权融合评估
+- **NASA-TLX问卷评估**：简化版NASA-TLX六维度评分（脑力/体力/时间需求、绩效、努力、挫败感），1-7分滑动评分，适老化设计
+- **行为分析评分器**：基于点击/回退/错误/耗时等行为特征的实时认知负荷评估，支持回退率、错误率、完成率等指标
+- **融合评估报告**：单次评估报告 + 趋势分析报告 + 周期汇总报告，多维度雷达图、个性化建议、风险预警
 - **患者教育生成**：新增 `intent=patient_education` 智能体能力，后端提供结构化患者教育内容（标题 + 分节 + 温馨提示），前端专门页面与排版展示，支持一键生成「给患者看的说明书」。
 - **科普推文生成**：新增 `intent=science_tweet`，可将普通问答结果概括为 1～3 条科普推文，并返回推荐话题标签，前端聊天中支持「推文版」按钮。
 - **多模态工具**：后端新增语音转写（STT）、图片 OCR + 影像解读等多模态接口，作为 Agent 工具与上传/聊天入口使用。
@@ -51,7 +61,7 @@
 - **自动化测试**：`tests/` 目录，运行 `pytest tests/`（含 conftest、test_health、test_auth_api 等），支持 `--cov=backend` 覆盖率，详见 [tests/README.md](tests/README.md)
 - **前后端联调**：后端默认通过 `python run.py` 启动并监听 5001；先执行 `python scripts/check_frontend_backend_api.py` 确认 19 项接口通过，再按前端项目 `docs/FRONTEND_E2E_TEST_CHECKLIST.md` 做手工端到端测试
 
-## 前后端联调（大创演示推荐）
+## 前后端联调
 
 ### 1）启动后端（FastAPI，默认 5001）
 
@@ -108,9 +118,9 @@ npm run serve
 │                                  API层                                   │
 │  ┌───────────────────────────────────────────────────────────────────┐   │
 │  │                        FastAPI 服务                              │   │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │   │
-│  │  │ 健康检查│   │ 统计查询│   │ 实体搜索│  │ Agent问答│  │ 数据导入│   │   │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │   │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
+│  │  │ 健康检查│   │ 统计查询│   │ 实体搜索│  │ Agent问答│  │ 数据导入│  │认知评估│   │
+│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘   │
 │  └───────────────────────────────────────────────────────────────────┘   │
 └───────┬───────────────────────────────────────────────────────────────────┘
         │
@@ -122,6 +132,10 @@ npm run serve
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────┐   │
 │  │    实体提取器    │  │ LLM + bind_tools│  │  图检索/向量检索 │  │ 会话记忆 │   │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────┘   │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐               │
+│  │  认知负荷评估    │  │ NASA-TLX评分器  │  │ 行为/EEG评分器  │               │
+│  │  (多模态融合)   │  │                 │  │                 │               │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘               │
 └───────┬───────────────────────────────────────────────────────────────────┘
         │
 ┌───────▼───────────────────────────────────────────────────────────────────┐
@@ -157,8 +171,11 @@ npm run serve
 | LLM | DeepSeek API | - |
 | 向量嵌入 | BAAI/bge-large-zh-v1.5 | - |
 | 知识图谱构建 | 自定义算法 | 基于 LLM 的实体关系提取 |
+| 认知负荷评估 | 多模态融合 | NASA-TLX + 行为分析 + **EEG支持** |
+| 评估量表 | NASA-TLX | 简化版六维度认知负荷量表 |
+| 生理信号 | **EEG（Muse S）** | **已实现模拟器+硬件采集**，支持MuseLSL协议 |
 
-## 产品定位与商业计划书对齐
+## 产品定位
 
 智护银龄·忆路康的产品定位，可以概括为：**面向老龄认知障碍人群及照护者的低认知负荷知识辅助与患者教育系统**。与商业计划书中的整体思路一一对应，主要体现在：
 
@@ -273,13 +290,131 @@ celery -A backend.celery_app worker --loglevel=info
 
 ## 认知负荷评估（接口说明）
 
-> 前端默认先把数据写入 localStorage；可通过上传接口写入 MySQL，用于机构看板聚合统计。
+> 系统支持多模态认知负荷量化评估，集成行为分析、NASA-TLX问卷与EEG信号。
+
+### 核心评估接口
+
+- `POST /api/cognitive-load/assess`：多模态认知负荷评估（支持行为事件+NASA-TLX问卷，自动融合评分）
+- `GET /api/cognitive-load/modalities`：查询当前可用评估模态
+- `GET /api/cognitive-load/assessment/{id}`：获取单条评估记录
+- `GET /api/cognitive-load/history`：获取用户评估历史
+
+### EEG接口（模拟器+硬件）
+
+系统支持两种EEG模式：开发测试用的**模拟器模式**和真实Muse S设备的**硬件模式**。
+
+#### 模拟器模式API
+
+```bash
+# 启用模拟器（默认中等负荷）
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/simulate/enable?cognitive_level=medium"
+
+# 生成模拟EEG特征
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/simulate/features?cognitive_level=high"
+
+# 创建模拟个体基线
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/simulate/baseline"
+
+# 完整模拟评估（带基线）
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/simulate/assess?cognitive_level=high&with_baseline=true"
+
+# 禁用模拟器
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/simulate/disable"
+```
+
+#### 硬件模式API（Muse S）
+
+```bash
+# 连接Muse S设备（需先在Muse Direct应用中启用LSL Streaming）
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/hardware/connect?timeout=10"
+
+# 创建个体基线（60秒安静闭眼）
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/hardware/baseline?duration=60"
+
+# 采集并评分（30秒）
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/hardware/collect?duration=30"
+
+# 获取硬件状态
+curl -X GET "http://localhost:5001/api/cognitive-load/eeg/hardware/status"
+
+# 断开设备并切换回模拟器模式
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/hardware/disconnect"
+
+# 手动切换模式
+curl -X POST "http://localhost:5001/api/cognitive-load/eeg/switch-mode?mode=simulation"
+```
+
+#### EEG评分算法
+
+| 指标 | 说明 | 负荷高时 |
+|------|------|---------|
+| Theta/Beta比率 | θ/β | ↑ |
+| Theta功率 | 相对基线 | ↑ |
+| Alpha功率 | 相对基线 | ↓ |
+
+### 报告接口
+
+- `GET /api/cognitive-load/report/single/{id}`：单次评估报告（含雷达图、关键发现、建议）
+- `GET /api/cognitive-load/report/trend`：趋势分析报告（支持days参数，默认7天）
+- `GET /api/cognitive-load/report/period`：周期汇总报告
+- `GET /api/cognitive-load/trend/analysis`：趋势数据查询
+- `GET /api/cognitive-load/stats/user`：用户认知负荷统计
+
+### 旧版接口（兼容）
 
 - `POST /api/cognitive-load/events`：批量上传行为事件
 - `POST /api/cognitive-load/questionnaires`：批量上传问卷
 - `GET /api/admin/cognitive-dashboard`：机构看板聚合统计（仅 `admin/doctor`）
 
-事件类型与数据结构说明见：`docs/认知负荷评估_数据结构与事件类型.md`
+### 评估报告预览
+
+评估报告包含：综合评分圆环、NASA-TLX六维度雷达图、行为与问卷分项评分、风险预警、关键发现、个性化建议、趋势图表。
+
+技术方案文档：`docs/技术方案.md`
+模块代码：`backend/cognitive/`
+
+### 认知负荷评估快速测试
+
+#### 1. 启动后端
+```bash
+python run.py
+```
+
+#### 2. API测试
+
+```bash
+# 测试评估接口（不保存到数据库）
+curl -X POST "http://localhost:5001/api/cognitive-load/assess?save=false" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: test_user" \
+  -d '{
+    "user_id": "test_user",
+    "task_id": "test_task",
+    "source": "patient_education",
+    "behavior_events": [{"event_type": "click", "ts": 1000, "params": {}}],
+    "nasa_tlx_answers": {
+      "mental_demand": 4,
+      "physical_demand": 3,
+      "temporal_demand": 2,
+      "performance": 5,
+      "effort": 3,
+      "frustration": 2
+    }
+  }'
+
+# 获取评估报告
+curl "http://localhost:5001/api/cognitive-load/report/trend?days=7" \
+  -H "X-User-Id: test_user"
+```
+
+#### 3. 单元测试
+```bash
+# pytest测试（20个测试用例）
+python -m pytest tests/test_cognitive_pytest.py -v
+
+# 自定义测试框架（23个测试用例）
+python tests/test_cognitive_load.py
+```
 
 ## 本地 Embedding / 镜像常见问题（CPU 环境）
 
@@ -568,10 +703,14 @@ python scripts/check_hadoop_env.py
 - ✅ 知识图谱生成：支持从多种数据源生成医学知识图谱
 - ✅ Agent 智能问答：兼容 RAG 检索与 LangGraph Agent，LLM 自主调用 RAG 工具（图检索、文献检索），支持多轮对话与流式输出
 - ✅ RAG 作为工具：图检索、向量检索、**Hybrid RAG 混合检索**（图+Chroma+关键词 RRF 融合）封装为 Agent 工具，由 Agent 按需调用
+- ✅ **多模态认知负荷评估**：行为埋点 + NASA-TLX主观问卷 + EEG生理信号预留接口，多模态加权融合量化认知负荷
+- ✅ **NASA-TLX问卷评估**：简化版六维度评分（脑力/体力/时间需求、绩效、努力、挫败感），适老化设计
+- ✅ **行为分析评分**：基于点击/回退/错误/耗时等行为特征的实时认知负荷评估
+- ✅ **融合评估报告**：单次评估报告 + 趋势分析报告 + 周期汇总报告，多维度雷达图与个性化建议
 - ✅ 分布式处理：基于 Hadoop 的分布式文本处理
 - ✅ 异步任务管理：基于 Celery 的异步任务队列
 - ✅ 多数据库支持：Neo4j + MySQL 数据持久化
-- ✅ RESTful API：完整的 API 服务，与 Vue 前端联调（图谱、历史记录、知识库、模板下载等）
+- ✅ RESTful API：完整的 API 服务，与 Vue 前端联调（图谱、历史记录、知识库、认知负荷评估、模板下载等）
 - ✅ 历史记录：统一存储与状态更新，支持分页与最多 1000 条，图谱构建/上传状态正确回显
 - ✅ Docker 容器化：全系统容器化部署
 
@@ -579,6 +718,8 @@ python scripts/check_hadoop_env.py
 
 - **Agent 架构**：LangGraph 编排 LLM 与 RAG 工具，替代固定 RAG 流水线，支持多轮与指代
 - **Hybrid RAG 融合检索**：图 + Chroma 文档 + 关键词三路 RRF 融合，统一格式与去重；作为 Agent 工具由 LLM 决策调用与组合
+- **多模态认知负荷评估**：行为分析 + NASA-TLX问卷 + EEG预留接口三模态融合，加权评分算法，支持雷达图可视化与个性化建议
+- **适老化认知评估**：简化版NASA-TLX量表适老化改造，1-7分滑动评分，降低老年用户填写负担
 - **分布式处理**：基于 Hadoop 的大规模文本处理
 - **异步架构**：Celery 异步任务管理，支持高并发
 - **多数据库协同**：Neo4j 图数据库 + MySQL 关系型数据库
@@ -595,6 +736,10 @@ python scripts/check_hadoop_env.py
 - [ ] 优化实体-关系提取算法，提高准确率
 - [ ] 增强 Agent 工具（更多检索源）
 - [ ] 优化分布式处理性能，支持更大规模数据
+- [x] **EEG硬件集成**：对接Muse S设备，实现EEG认知负荷评估（**已完成模拟器+硬件模式**）
+- [ ] **眼动追踪集成**：预留眼动数据接口，支持多模态融合评估扩展
+- [ ] **认知负荷实时预警**：基于融合评分的实时认知过载预警机制
+- [ ] **个性化认知模型**：基于用户历史数据建立个性化认知负荷基线模型
 
 ## 贡献指南
 
@@ -616,5 +761,5 @@ python scripts/check_hadoop_env.py
           后端: [https://github.com/xiangyun247/knowledge_graph]
 
 **项目状态**：活跃开发中  
-**最后更新**：2026-03-09  
-**版本**：v2.0.0
+**最后更新**：2026-03-31  
+**版本**：v2.2.0（EEG Muse S硬件支持版）

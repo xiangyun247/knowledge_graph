@@ -5,39 +5,35 @@
 
 from dotenv import load_dotenv, find_dotenv
 import os
+import logging
 from pathlib import Path
-import logging.config
 
-# ==================== 加载环境变量 ====================
+logger = logging.getLogger(__name__)
 
-# 方法 1: 使用 find_dotenv() 自动查找 .env 文件
 env_file = find_dotenv()
 if env_file:
-    print(f"加载 .env 文件: {env_file}")
     load_dotenv(env_file, override=True)
+    logger.info(f"环境变量已加载: {env_file}")
 else:
-    print("警告: 未找到 .env 文件")
-    # 方法 2: 手动指定路径作为备用方案
     env_path = Path(__file__).parent / ".env"
     if env_path.exists():
-        print(f"使用备用路径: {env_path}")
         load_dotenv(env_path, override=True)
+        logger.info(f"环境变量已加载: {env_path}")
     else:
-        print(f"错误: .env 文件不存在于 {env_path}")
+        logger.warning("未找到 .env 文件")
 
-# 验证关键环境变量是否加载
 neo4j_password = os.getenv("NEO4J_PASSWORD")
 deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
 
 if neo4j_password:
-    print(f"[OK] NEO4J_PASSWORD loaded (length: {len(neo4j_password)})")
+    logger.info(f"NEO4J_PASSWORD 已加载 (长度: {len(neo4j_password)})")
 else:
-    print("[WARN] NEO4J_PASSWORD not loaded")
+    logger.warning("NEO4J_PASSWORD 未设置")
 
 if deepseek_api_key:
-    print(f"[OK] DEEPSEEK_API_KEY loaded (length: {len(deepseek_api_key)})")
+    logger.info(f"DEEPSEEK_API_KEY 已加载 (长度: {len(deepseek_api_key)})")
 else:
-    print("[WARN] DEEPSEEK_API_KEY not loaded")
+    logger.warning("DEEPSEEK_API_KEY 未设置")
 
 # ==================== 项目路径配置 ====================
 
@@ -87,7 +83,7 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "knowledge_graph_system")
 
 # 验证 MySQL 密码
 if not MYSQL_PASSWORD:
-    print("⚠️  警告: MYSQL_PASSWORD 未配置，将使用空密码")
+    print("[Warning] MYSQL_PASSWORD 未配置，将使用空密码")
 
 # ==================== DeepSeek API 配置 ====================
 
@@ -98,14 +94,14 @@ DEEPSEEK_TEMPERATURE = float(os.getenv("DEEPSEEK_TEMPERATURE", "0.7"))
 
 # 验证 API Key（警告但不报错，因为某些操作可能不需要 LLM）
 if not DEEPSEEK_API_KEY:
-    print("⚠️  警告: DEEPSEEK_API_KEY 未配置，LLM 功能将不可用")
+    print("[Warning] DEEPSEEK_API_KEY 未配置，LLM 功能将不可用")
 
 # ==================== 智谱 GLM-Image 配置 ====================
 
 # 图生模型 API Key（用于 GLM-Image 文生图）
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
 if not ZHIPU_API_KEY:
-    print("⚠️  警告: ZHIPU_API_KEY 未配置，患者教育配图功能将不可用")
+    print("[Warning] ZHIPU_API_KEY 未配置，患者教育配图功能将不可用")
 
 # ==================== Embedding 配置 ====================
 
@@ -165,8 +161,8 @@ VERSION = os.getenv("VERSION", "1.0.0")
 
 # ==================== CORS 配置 ====================
 
-# 允许的跨域源
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# 允许的跨域源（生产环境必须配置，默认为空列表强制要求配置）
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
 
 # 允许的 HTTP 方法
 CORS_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
@@ -569,21 +565,20 @@ def validate_config():
 def print_config_summary():
     """打印配置摘要"""
     print("\n" + "=" * 60)
-    print(f"🚀 智护银龄·忆路康知识辅助系统 v{VERSION}")
+    print(f"[System] 智护银龄·忆路康知识辅助系统 v{VERSION}")
     print("=" * 60)
-    print(f"🌐 服务地址: http://{HOST}:{PORT}")
-    print(f"🗄️  Neo4j: {NEO4J_URI}")
-    print(f"🤖 LLM 模型: {DEEPSEEK_MODEL}")
-    print(f"📊 向量模型: {'本地模型' if USE_LOCAL_EMBEDDING else '远程API'} - {EMBEDDING_MODEL}")
-    print(f"🔍 调试模式: {'开启' if DEBUG else '关闭'}")
+    print(f"[Web] 服务地址: http://{HOST}:{PORT}")
+    print(f"[Database] Neo4j: {NEO4J_URI}")
+    print(f"[AI] LLM 模型: {DEEPSEEK_MODEL}")
+    print(f"[Vector] 向量模型: {'本地模型' if USE_LOCAL_EMBEDDING else '远程API'} - {EMBEDDING_MODEL}")
+    print(f"[Debug] 调试模式: {'开启' if DEBUG else '关闭'}")
     print("=" * 60)
 
-    # 显示配置问题
     issues = validate_config()
     if issues:
-        print("\n⚠️  配置问题:")
+        print("\n[Warning] 配置问题:")
         for issue in issues:
-            print(f"  ❌ {issue}")
+            print(f"  [Error] {issue}")
         print()
 
 

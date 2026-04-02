@@ -801,6 +801,48 @@ class MySQLClient:
         """
         self.execute_update(create_q_sql)
 
+    def ensure_eeg_tables(self):
+        """创建 EEG 会话管理相关数据表"""
+        create_subjects_sql = """
+        CREATE TABLE IF NOT EXISTS eeg_subjects (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            subject_code VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(100),
+            age INT NOT NULL,
+            gender ENUM('male', 'female') NOT NULL,
+            cognitive_status ENUM('normal', 'mci', 'dementia') DEFAULT 'normal',
+            remark TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        self.execute_update(create_subjects_sql)
+
+        create_sessions_sql = """
+        CREATE TABLE IF NOT EXISTS eeg_sessions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            subject_id INT NOT NULL,
+            start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            end_time TIMESTAMP NULL,
+            duration_seconds INT DEFAULT 0,
+            avg_score DECIMAL(5,4) DEFAULT 0,
+            avg_theta_beta DECIMAL(8,4) DEFAULT 0,
+            avg_alpha_beta DECIMAL(8,4) DEFAULT 0,
+            avg_theta_power DECIMAL(8,4) DEFAULT 0,
+            avg_alpha_power DECIMAL(8,4) DEFAULT 0,
+            avg_beta_power DECIMAL(8,4) DEFAULT 0,
+            avg_snr DECIMAL(8,4) DEFAULT 0,
+            score_trend JSON,
+            cognitive_level ENUM('low', 'medium', 'high') DEFAULT 'medium',
+            session_note TEXT,
+            status ENUM('active', 'completed', 'aborted') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (subject_id) REFERENCES eeg_subjects(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+        self.execute_update(create_sessions_sql)
+
+
 # 单例模式
 mysql_client = None
 
