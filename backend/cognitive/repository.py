@@ -434,10 +434,13 @@ class CognitiveLoadRepository:
         results = self.mysql.execute_query(query, params)
         return [self._parse_assessment_row(row) for row in results]
 
-    def _parse_assessment_row(self, result: Dict) -> Dict:
+    def _parse_assessment_row(self, result) -> Dict:
         """解析评估记录行"""
         if not result:
             return result
+
+        # RowMapping 不支持原地赋值，统一转为普通 dict
+        result = dict(result)
 
         for field in ["behavior_features", "questionnaire_features", "eeg_features",
                        "modality_weights", "recommendations"]:

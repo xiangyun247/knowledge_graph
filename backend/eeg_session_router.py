@@ -8,7 +8,7 @@ EEG 会话管理路由
 
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from db.mysql_client import MySQLClient
@@ -42,7 +42,8 @@ class SubjectUpdate(BaseModel):
 
 
 class SessionCreate(BaseModel):
-    subject_id: int
+    # 支持传数字 id 或字符串 subject_code（老人模式直接输入编号）
+    subject_id: Union[int, str]
     session_note: Optional[str] = None
 
 
@@ -71,19 +72,20 @@ def get_subjects(
     mysql = get_mysql()
     try:
         conditions = []
-        params = []
+        params_dict = {}
+
         if keyword:
             conditions.append("(subject_code LIKE :keyword OR name LIKE :keyword)")
-            params.append({"keyword": f"%{keyword}%"})
+            params_dict["keyword"] = f"%{keyword}%"
         if cognitive_status:
-            conditions.append("cognitive_status = :status")
-            params.append({"status": cognitive_status})
+            conditions.append("cognitive_status = :cognitive_status")
+            params_dict["cognitive_status"] = cognitive_status
 
         where = " AND ".join(conditions) if conditions else "1=1"
         offset = (page - 1) * page_size
 
         count_query = f"SELECT COUNT(*) as total FROM eeg_subjects WHERE {where}"
-        total = mysql.execute_query(count_query, dict(zip([p for p in params if isinstance(p, dict)], [v for p in params for v in p.values()])))[0]["total"]
+        total = mysql.execute_query(count_query, params_dict)[0]["total"]
 
         query = f"""
             SELECT * FROM eeg_subjects
@@ -91,10 +93,6 @@ def get_subjects(
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :offset
         """
-        params_dict = {}
-        for p in params:
-            if isinstance(p, dict):
-                params_dict.update(p)
         params_dict["limit"] = page_size
         params_dict["offset"] = offset
 
@@ -123,7 +121,7 @@ def get_subject(subject_id: int):
         result = mysql.execute_query("SELECT * FROM eeg_subjects WHERE id = :id", {"id": subject_id})
         if not result:
             raise HTTPException(status_code=404, detail="受试者不存在")
-        subject = result[0]
+        subject = dict(result[0])  # RowMapping → dict，才能做字段赋值
         if subject.get("created_at"):
             subject["created_at"] = subject["created_at"].isoformat()
         if subject.get("updated_at"):
@@ -227,15 +225,26 @@ def create_session(data: SessionCreate):
     """创建监测会话（开始监测）"""
     mysql = get_mysql()
     try:
-        result = mysql.execute_query("SELECT id FROM eeg_subjects WHERE id = :id", {"id": data.subject_id})
-        if not result:
-            raise HTTPException(status_code=404, detail="受试者不存在")
+        # subject_id 可能是 int（管理端）或 subject_code 字符串（老人模式）
+        if isinstance(data.subject_id, str) and not str(data.subject_id).isdigit():
+            result = mysql.execute_query(
+                "SELECT id FROM eeg_subjects WHERE subject_code = :code",
+                {"code": data.subject_id}
+            )
+            if not result:
+                raise HTTPException(status_code=404, detail=f"受试者编号 '{data.subject_id}' 不存在")
+            real_subject_id = result[0]["id"]
+        else:
+            real_subject_id = int(data.subject_id)
+            result = mysql.execute_query("SELECT id FROM eeg_subjects WHERE id = :id", {"id": real_subject_id})
+            if not result:
+                raise HTTPException(status_code=404, detail="受试者不存在")
 
         mysql.execute_update("""
             INSERT INTO eeg_sessions (subject_id, session_note)
             VALUES (:subject_id, :session_note)
         """, {
-            "subject_id": data.subject_id,
+            "subject_id": real_subject_id,
             "session_note": data.session_note
         })
 
@@ -355,6 +364,12 @@ def get_sessions(
                 s["end_time"] = s["end_time"].isoformat()
             if s.get("created_at"):
                 s["created_at"] = s["created_at"].isoformat()
+            if isinstance(s.get("score_trend"), str):
+                import json
+                try:
+                    s["score_trend"] = json.loads(s["score_trend"])
+                except Exception:
+                    s["score_trend"] = []
 
         return {"total": total, "sessions": sessions, "page": page, "page_size": page_size}
     except Exception as e:
@@ -384,45 +399,76 @@ def get_session_summary(
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
-        if group_by == "subject":
-            query = f"""
-                SELECT
-                    subject_id,
-                    subject_code,
-                    subject_name,
-                    COUNT(*) as session_count,
-                    AVG(avg_score) as avg_score,
-                    AVG(duration_seconds) as avg_duration,
-                    AVG(avg_theta_beta) as avg_theta_beta,
-                    AVG(avg_alpha_beta) as avg_alpha_beta
-                FROM (
-                    SELECT s.*, sub.subject_code, sub.name as subject_name
-                    FROM eeg_sessions s
-                    LEFT JOIN eeg_subjects sub ON s.subject_id = sub.id
-                    WHERE {where}
-                ) t
-                GROUP BY subject_id, subject_code, subject_name
-            """
-        elif group_by == "status":
-            query = f"""
-                SELECT status, COUNT(*) as count, AVG(avg_score) as avg_score
-                FROM eeg_sessions WHERE {where}
-                GROUP BY status
-            """
-        else:
-            query = f"""
-                SELECT
-                    DATE(start_time) as date,
-                    COUNT(*) as session_count,
-                    AVG(avg_score) as avg_score,
-                    AVG(duration_seconds) as avg_duration
-                FROM eeg_sessions WHERE {where}
-                GROUP BY DATE(start_time)
-                ORDER BY date DESC
-            """
+        total_result = mysql.execute_query(f"SELECT COUNT(*) as total FROM eeg_sessions WHERE {where}", params)
+        total_sessions = total_result[0]["total"] if total_result else 0
 
-        results = mysql.execute_query(query, params)
-        return {"group_by": group_by, "data": results}
+        avg_result = mysql.execute_query(f"SELECT AVG(avg_score) as avg_score FROM eeg_sessions WHERE {where} AND avg_score IS NOT NULL", params)
+        avg_score = round(avg_result[0]["avg_score"], 1) if avg_result and avg_result[0]["avg_score"] else 0
+
+        high_risk_result = mysql.execute_query(
+            f"SELECT COUNT(*) as high_count, COUNT(*) * 1.0 / NULLIF((SELECT COUNT(*) FROM eeg_sessions WHERE {where}), 0) as ratio FROM eeg_sessions WHERE {where} AND cognitive_level = 'high'", params
+        )
+        high_risk_ratio = round(high_risk_result[0]["ratio"], 4) if high_risk_result and high_risk_result[0]["ratio"] else 0
+
+        subject_result = mysql.execute_query(
+            f"""
+            SELECT
+                subject_id,
+                subject_code,
+                subject_name,
+                COUNT(*) as session_count,
+                AVG(avg_score) as avg_score,
+                AVG(duration_seconds) as avg_duration
+            FROM (
+                SELECT s.*, sub.subject_code, sub.name as subject_name
+                FROM eeg_sessions s
+                LEFT JOIN eeg_subjects sub ON s.subject_id = sub.id
+                WHERE {where}
+            ) t
+            GROUP BY subject_id, subject_code, subject_name
+            """, params
+        )
+
+        status_result = mysql.execute_query(
+            f"""
+            SELECT
+                cognitive_level as cognitive_status,
+                COUNT(*) as count,
+                AVG(avg_score) as avg_score,
+                MIN(avg_score) as min_score,
+                MAX(avg_score) as max_score,
+                AVG(duration_seconds) as avg_duration
+            FROM eeg_sessions
+            WHERE {where} AND cognitive_level IS NOT NULL
+            GROUP BY cognitive_level
+            """, params
+        )
+
+        date_result = mysql.execute_query(
+            f"""
+            SELECT DATE(start_time) as date, COUNT(*) as session_count, AVG(avg_score) as avg_score
+            FROM eeg_sessions WHERE {where} GROUP BY DATE(start_time) ORDER BY date DESC
+            """, params
+        )
+
+        subject_ids = mysql.execute_query(f"SELECT COUNT(DISTINCT subject_id) as cnt FROM eeg_sessions WHERE {where}", params)
+        total_subjects = subject_ids[0]["cnt"] if subject_ids else 0
+
+        def format_date_result(r):
+            d = dict(r)
+            if d.get("date"):
+                d["date"] = d["date"].isoformat() if hasattr(d["date"], "isoformat") else str(d["date"])
+            return d
+
+        return {
+            "total_sessions": total_sessions,
+            "total_subjects": total_subjects,
+            "avg_score": avg_score,
+            "high_risk_ratio": high_risk_ratio,
+            "subject_details": [dict(r) for r in subject_result] if subject_result else [],
+            "status_groups": [dict(r) for r in status_result] if status_result else [],
+            "date_groups": [format_date_result(r) for r in date_result] if date_result else []
+        }
     except Exception as e:
         logger.error(f"获取汇总失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -443,7 +489,7 @@ def get_session(session_id: int):
         """, {"id": session_id})
         if not result:
             raise HTTPException(status_code=404, detail="会话不存在")
-        session = result[0]
+        session = dict(result[0])  # RowMapping → dict
         if session.get("start_time"):
             session["start_time"] = session["start_time"].isoformat()
         if session.get("end_time"):

@@ -5,11 +5,12 @@
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 import logging
 import config
+import json
 from contextlib import asynccontextmanager
 
 # 导入核心模块
@@ -468,7 +469,106 @@ async def list_entities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 异常处理 ====================
+# ==================== 老人陪伴模式路由 ====================
+
+
+class AgentQueryRequest(BaseModel):
+    """Agent 查询请求（兼容前端 chat.js 的请求体）"""
+    question: str = Field(..., description="用户消息")
+    session_id: Optional[str] = None
+    model: Optional[str] = None
+    deep_think: bool = False
+    intent: Optional[str] = None  # "elderly_companion" | None
+    answer_style: Optional[str] = None
+
+
+@app.post("/api/agent/query", tags=["Agent"])
+async def agent_query(request: AgentQueryRequest):
+    """统一 Agent 查询入口，通过 intent 分流"""
+    if request.intent == "elderly_companion":
+        return await handle_elderly_companion(request)
+    # 其他 intent 暂走 RAG fallback
+    return await _fallback_rag_query(request.question)
+
+
+@app.post("/api/agent/query/stream", tags=["Agent"])
+async def agent_query_stream(request: AgentQueryRequest):
+    """统一 Agent 流式查询入口，通过 intent 分流"""
+    if request.intent == "elderly_companion":
+        return StreamingResponse(
+            stream_elderly_companion(request),
+            media_type="text/event-stream"
+        )
+    # fallback
+    async def fallback():
+        result = await _fallback_rag_query(request.question)
+        yield f"data: {json.dumps({'type': 'done', 'answer': result.get('answer', '')})}\n\n"
+    return StreamingResponse(fallback(), media_type="text/event-stream")
+
+
+async def handle_elderly_companion(request: AgentQueryRequest):
+    """老人陪伴模式：非流式"""
+    from api.elderly_companion import XIAOYI_SYSTEM_PROMPT
+
+    messages = [{"role": "system", "content": XIAOYI_SYSTEM_PROMPT}]
+    # TODO: 如果有 session 管理，可以加载历史消息
+    messages.append({"role": "user", "content": request.question})
+
+    if llm_client is None:
+        raise HTTPException(status_code=503, detail="LLM 服务未就绪")
+
+    answer = llm_client.chat(messages, temperature=0.8, max_tokens=200)
+
+    return {
+        "answer": answer,
+        "sources": []
+    }
+
+
+async def stream_elderly_companion(request: AgentQueryRequest):
+    """老人陪伴模式：流式输出"""
+    from api.elderly_companion import XIAOYI_SYSTEM_PROMPT
+
+    messages = [{"role": "system", "content": XIAOYI_SYSTEM_PROMPT}]
+    # TODO: 如果有 session 管理，可以加载历史消息
+    messages.append({"role": "user", "content": request.question})
+
+    if llm_client is None:
+        error_data = json.dumps({"type": "error", "detail": "LLM 服务未就绪"})
+        yield f"data: {error_data}\n\n"
+        return
+
+    full_answer = ""
+    try:
+        for chunk in llm_client.stream_chat(messages, temperature=0.8, max_tokens=280):
+            full_answer += chunk
+            yield f"data: {json.dumps({'type': 'chunk', 'delta': chunk})}\n\n"
+    except Exception as e:
+        logger.error(f"老人陪伴流式输出异常: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+        return
+
+    yield f"data: {json.dumps({'type': 'done', 'answer': full_answer})}\n\n"
+
+
+async def _fallback_rag_query(question: str):
+    """非 elderly_companion intent 的 fallback：走 RAG pipeline"""
+    if rag_pipeline is None:
+        return {"answer": "服务暂不可用，请稍后重试。", "sources": []}
+    try:
+        result = rag_pipeline.answer(
+            query=question,
+            use_graph=True,
+            use_vector=True,
+            top_k=5
+        )
+        return {
+            "answer": result.get("answer", "抱歉，暂时无法回答。"),
+            "sources": result.get("sources", [])
+        }
+    except Exception as e:
+        logger.error(f"RAG fallback 查询失败: {e}")
+        return {"answer": "查询出错，请稍后重试。", "sources": []}
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):

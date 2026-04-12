@@ -1,0 +1,293 @@
+# ============================================================
+# 云服务器完整版 Compose — v3.0（最终版）
+# ============================================================
+#
+# 目标环境：腾讯云 CVM 8核16GB 按量计费
+#
+# 6 个服务：Redis + MySQL + Neo4j + Backend + Celery + Nginx(前端)
+# 不含 Hadoop（文本量小，不需要大数据集群）
+#
+# 资源分配（基于实际代码静态分析）：
+#   Backend:    ≤4GB   （Embedding 2G + PaddleOCR 600M + Whisper 300M + 框架）
+#   Celery:     ≤2.5GB （异步任务，独立 Embedding/LLM 客户端）
+#   Neo4j:      ≤2GB   （堆 512~1024M + 页面缓存 512M）
+#   MySQL:      ≤1GB   （buffer_pool=512M）
+#   Redis:      ≤256MB （LRU淘汰）
+#   Nginx:      ≤128MB
+#   系统余量：   ~4-6GB
+#   合计峰值：   ~13-15GB / 16GB ✅
+#
+# 用法：
+#   1. cp .env.example .env && vim .env   # 填写密码和 API Key
+#   2. docker compose -f docker-compose.cloud-full.yml up -d --build
+#   3. 浏览器打开 http://你的公网IP
+#
+# 常用运维：
+#   查日志：  docker compose -f docker-compose.cloud-full.yml logs -f backend
+#   重启：    docker compose -f docker-compose.cloud-full.yml restart
+#   停止：    docker compose -f docker-compose.cloud-full.yml down
+#   清数据：  docker compose -f docker-compose.cloud-full.yml down -v  ⚠️ 会删数据库！
+# ============================================================
+
+services:
+
+  # ==================== 1. Redis ====================
+  # 用途：Celery Broker + Session 缓存 + 任务状态存储
+
+  redis:
+    image: redis:7-alpine
+    container_name: kg-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - kg-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ==================== 2. MySQL 8.0 ====================
+  # 用途：用户表、评估记录、EEG 数据、行为事件、图谱元数据
+
+  mysql:
+    image: mysql:8.0
+    container_name: kg-mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3307:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root123}
+      - MYSQL_DATABASE=knowledge_graph_system
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
+      # 加大 InnoDB buffer pool（默认128M → 512M，查询更流畅）
+      - MYSQL_INNODB_BUFFER_POOL_SIZE=512M
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./MYSQL/init_mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - kg-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ==================== 3. Neo4j 5.15 Community ====================
+  # 用途：知识图谱存储与查询（疾病-症状-药物 关系网络）
+
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: kg-neo4j
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-a2303548451}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      # 堆内存：初始512M，最大1024M
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1024m
+      # 页面缓存 512M（利用高配机器富余内存加速图遍历）
+      - NEO4J_server_memory_pagecache_size=512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - kg-network
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-a2303548451}", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ==================== 4. FastAPI Backend ====================
+  # 最大内存消费者！Embedding模型 ~2GB + PaddleOCR ~600MB + Whisper ~300MB
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: kg-backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"     # 默认仅本地访问；调试时改为 "5001:5001"
+    command: uvicorn backend.app:app --host 0.0.0.0 --port 5001 --workers 1 --log-level info
+    environment:
+      # ---- Neo4j ----
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-a2303548451}
+      - NEO4J_DATABASE=neo4j
+      # ---- MySQL ----
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
+      - MYSQL_DATABASE=knowledge_graph_system
+      # ---- Redis ----
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # ---- LLM / Agent ----
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      # ---- 应用配置 ----
+      - DEBUG=False
+      - HOST=0.0.0.0
+      - PORT=5001
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      # ---- JWT 认证 ----
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production-32chars}
+      # ---- CORS ----
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      # ---- ChromaDB 向量数据库 ----
+      - CHROMA_PERSIST_DIR=/app/data/chroma_v2
+      - CHROMA_TELEMETRY_ENABLED=false
+      # ---- Embedding 模型（最大内存开销！）----
+      - USE_LOCAL_EMBEDDING=True
+      - LOCAL_EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+      - EMBEDDING_DIM=1024
+    volumes:
+      - ./backend:/app/backend          # 代码热更新（开发用；生产可去掉）
+      - ./uploads:/app/uploads         # 上传文件持久化
+      - ./logs:/app/logs               # 日志输出
+      - ./data:/app/data               # ChromaDB 等数据
+      - chroma_data:/app/data/chroma_v2 # ChromaDB 向量索引独立卷
+    networks:
+      - kg-network
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G                  # 上限：覆盖全部模型加载后的峰值
+        reservations:
+          memory: 2G                 # 保证最低：至少够跑 Embedding
+
+  # ==================== 5. Celery Worker ====================
+  # 异步任务：知识图谱构建、文档分块入库、EEG 处理等
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: kg-celery-worker
+    restart: unless-stopped
+    environment:
+      # ---- 与 Backend 相同的数据库配置 ----
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-a2303548451}
+      - NEO4J_DATABASE=neo4j
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-kg_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kg_password}
+      - MYSQL_DATABASE=knowledge_graph_system
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # ---- LLM ----
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      # ---- 应用 ----
+      - LOG_LEVEL=INFO
+      - CHROMA_PERSIST_DIR=/app/data/chroma_v2
+      - CHROMA_TELEMETRY_ENABLED=false
+    volumes:
+      - ./backend:/app/backend
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - chroma_data:/app/data/chroma_v2
+    networks:
+      - kg-network
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    # 云上降低并发（本地可用 concurrency=4）
+    command: celery -A backend.celery_app worker --loglevel=info --concurrency=2
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+        reservations:
+          memory: 1G
+
+  # ==================== 6. Vue 前端 (Nginx) ====================
+  # 多阶段构建：Node 构建 → Nginx 托管 SPA
+  # /api 反向代理到 backend 容器，前后端同域无 CORS
+
+  frontend:
+    build:
+      context: ${FRONTEND_CONTEXT:-../vue_test_style}
+      dockerfile: docker/Dockerfile
+      args:
+        - VUE_APP_API_BASE_URL=
+    container_name: kg-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"                      # 对外暴露：HTTP 直接访问
+    networks:
+      - kg-network
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+# ==================== 数据卷 ====================
+volumes:
+  redis_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  mysql_data:
+    driver: local
+  chroma_data:
+    driver: local
+
+# ==================== 网络 ====================
+networks:
+  kg-network:
+    driver: bridge

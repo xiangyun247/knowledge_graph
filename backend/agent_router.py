@@ -133,7 +133,7 @@ def _history_to_messages(history: list):
     return out
 
 
-@router.post("/agent/query", dependencies=[require_roles("admin", "doctor", "patient")])
+@router.post("/agent/query", dependencies=[require_roles("admin", "doctor", "patient", "guest", "elderly")])
 async def api_agent_query(request: Request, req: AgentQueryRequest):
     """
     使用 LangGraph Agent 进行问答。
@@ -309,6 +309,7 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
                 model_id=req.model,
                 deep_think=req.deep_think,
                 answer_style=req.answer_style,
+                intent=req.intent,
             ),
         )
     except Exception as e:
@@ -350,7 +351,7 @@ async def api_agent_query(request: Request, req: AgentQueryRequest):
     }
 
 
-@router.post("/agent/query/stream", dependencies=[require_roles("admin", "doctor", "patient")])
+@router.post("/agent/query/stream", dependencies=[require_roles("admin", "doctor", "patient", "guest", "elderly")])
 async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
     """
     6.2 流式问答：SSE 推送 chunk（打字机）与 done（answer+sources）。
@@ -467,6 +468,7 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
                 model_id=req.model,
                 deep_think=req.deep_think,
                 answer_style=req.answer_style,
+                intent=req.intent,
             ):
                 if ev.get("type") == "done" and req.session_id and req.session_id.strip():
                     append_session_exchange(req.session_id, req.question, ev.get("answer", ""))

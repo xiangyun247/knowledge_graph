@@ -1,32 +1,36 @@
-# Dockerfile for Celery Worker
+# ============================================================
+# Celery Worker — 云部署优化版 (v2)
+# ============================================================
+# 与 Backend 共享同一套 Python 依赖
+# 额外需要 gcc/g++ 用于某些 native 扩展编译
+#
+# 构建上下文：项目根目录（knowledge_gragh/）
+# ============================================================
+
 FROM python:3.10-slim
 
-# 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
+# ---- 第1层：系统依赖（含编译工具） ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
+    libgomp1 \
+    libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
+# ---- 第2层：Python 依赖（与 backend 相同，独立缓存） ----
 COPY requirements.txt .
 
-# 配置 pip 使用国内镜像源（解决网络问题）
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn
+    pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制应用代码
+# ---- 第3层：应用代码 ----
 COPY . .
 
-# 创建必要的目录
-RUN mkdir -p /app/uploads /app/logs /app/data
+RUN mkdir -p /app/uploads /app/logs /app/data/chroma_v2
 
-# 默认启动 Worker，可以通过 docker-compose 覆盖命令
+# 默认启动 Worker（concurrency 由 docker-compose 覆盖）
 CMD ["celery", "-A", "backend.celery_app", "worker", "--loglevel=info"]
-

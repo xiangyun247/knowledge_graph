@@ -78,8 +78,8 @@ def _ensure_neo4j_client():
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="知识图谱系统API",
-    description="知识图谱系统后端API接口文档",
+    title="忆路康认知辅助系统 API",
+    description="智护银龄 · 忆路康 - 基于 AI 与认知负荷的老龄认知障碍人群低认知负荷知识辅助系统后端 API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -2243,7 +2243,7 @@ async def get_history_stats():
         raise HTTPException(status_code=500, detail=f"获取历史记录统计失败: {str(e)}")
 
 
-@app.post("/api/history/save", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
+@app.post("/api/history/save", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient", "elderly")])
 async def save_history(record: ChatHistoryCreate):
     """
     保存聊天/图谱/上传等历史记录
@@ -2300,7 +2300,7 @@ async def save_history(record: ChatHistoryCreate):
         raise HTTPException(status_code=500, detail=f"保存历史记录失败: {str(e)}")
 
 
-@app.put("/api/history/{history_id}/status", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
+@app.put("/api/history/{history_id}/status", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient", "elderly")])
 async def update_history_status(history_id: str, body: Optional[dict] = Body(None)):
     """更新历史记录状态（前端上传进度/完成/失败时调用）"""
     if not history_id or history_id == "undefined":
@@ -2322,7 +2322,7 @@ async def update_history_status(history_id: str, body: Optional[dict] = Body(Non
 
 
 # 注意：必须先注册字面路径 /clear，再注册 /{history_id}，否则 clear 会被当作 history_id 匹配
-@app.delete("/api/history/clear", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
+@app.delete("/api/history/clear", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient", "elderly")])
 async def clear_history_all(request: Request):
     """清空历史记录；可按当前用户清空或清空全部（由前端传参或后端策略决定，此处清空全部）"""
     try:
@@ -2341,7 +2341,7 @@ async def clear_history_all(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/history/{history_id}", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
+@app.delete("/api/history/{history_id}", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient", "elderly")])
 async def delete_history_one(history_id: str):
     """删除单条历史记录"""
     if not history_id or history_id == "undefined":
@@ -2372,7 +2372,7 @@ class BatchDeleteHistoryBody(BaseModel):
     ids: Optional[List[str]] = Field(None, description="历史记录 ID 列表（兼容前端）")
 
 
-@app.post("/api/history/batch-delete", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient")])
+@app.post("/api/history/batch-delete", tags=["历史记录"], dependencies=[require_roles("admin", "doctor", "patient", "elderly")])
 async def batch_delete_history(body: BatchDeleteHistoryBody):
     """批量删除历史记录"""
     ids = (body.history_ids or body.ids or [])

@@ -1,31 +1,49 @@
+# ============================================================
+# FastAPI Backend — 云部署优化版 (v2)
+# ============================================================
+# 优化项：
+#   1. 依赖层与代码层分离（改一行代码不需要重装 torch）
+#   2. pip 缓存利用最大化
+#   3. 预创建必要目录 + 健康检查支持
+#
+# 构建上下文：项目根目录（knowledge_gragh/）
+# 镜像大小预估：~5-7GB（主要来自 PyTorch + PaddlePaddle）
+# ============================================================
+
 FROM python:3.10-slim
 
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖（curl 可用于健康检查等；不安装 Docker CLI，避免构建时外网 TLS 失败）
+# ---- 第1层：系统依赖（极少变动，独立缓存） ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    # PaddlePaddle 编译依赖（如需要）
+    libgomp1 \
+    libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件（与 Celery 统一使用 requirements.txt，保证 Agent/知识库等依赖完整）
+# ---- 第2层：Python 依赖（requirements.txt 变动才重建） ----
 COPY requirements.txt .
 
-# 配置 pip 使用国内镜像源（解决网络问题）
+# pip 配置：国内镜像 + 不缓存下载包（节省镜像空间）
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn
+    pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 安装 Python 依赖（完整版，一次构建通过；镜像较大时可考虑 requirements-minimal.txt 做轻量版）
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 复制应用代码
+# ---- 第3层：应用代码（每次都重新复制，但上面两层已缓存） ----
 COPY . .
 
-# 创建必要的目录
-RUN mkdir -p /app/uploads /app/logs /app/data
+# 创建运行时必要目录
+RUN mkdir -p /app/uploads /app/logs /app/data/chroma_v2
 
 # 暴露端口
 EXPOSE 5001
 
-# 启动命令
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "5001"]
+# 健康检查（Docker Compose 和编排系统可用）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5001/api/health || exit 1
+
+# 启动命令：单 worker，避免 Embedding 模型被加载多份
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "5001", \
+     "--workers", "1", "--log-level", "info"]

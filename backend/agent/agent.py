@@ -225,13 +225,26 @@ def _build_trace(
     }
 
 
+def _get_system_prompt(intent: Optional[str] = None) -> str:
+    """根据 intent 返回对应的 system prompt。"""
+    if (intent or "").strip().lower() == "elderly_companion":
+        try:
+            from backend.agent.elderly_prompt import ELDERLY_COMPANION_PROMPT
+            return ELDERLY_COMPANION_PROMPT
+        except ImportError:
+            logger.warning("elderly_prompt 模块加载失败，回退到默认 prompt")
+    return AGENT_SYSTEM_PROMPT
+
+
 def _build_initial_messages(
     question: str,
     initial_messages: Optional[Sequence[BaseMessage]] = None,
     answer_style: Optional[str] = None,
+    intent: Optional[str] = None,
 ):
     """[SystemMessage] + initial_messages + [HumanMessage(question)]。answer_style=concise 时在问题前加简洁回答提示（M9）。"""
-    msgs: list = [SystemMessage(content=AGENT_SYSTEM_PROMPT)]
+    sys_prompt = _get_system_prompt(intent)
+    msgs: list = [SystemMessage(content=sys_prompt)]
     if initial_messages:
         msgs.extend(initial_messages)
     user_content = question
@@ -252,6 +265,7 @@ def run_agent(
     api_key: str = None,
     deep_think: bool = False,
     answer_style: Optional[str] = None,
+    intent: Optional[str] = None,
 ) -> dict:
     """
     运行 Agent：用户问题 → 多步 Tool 调用 → 生成回答。
@@ -273,7 +287,7 @@ def run_agent(
             pass
     try:
         app = create_agent_graph().compile()
-        init_messages = _build_initial_messages(question, initial_messages, answer_style=answer_style)
+        init_messages = _build_initial_messages(question, initial_messages, answer_style=answer_style, intent=intent)
         init: AgentState = {"messages": init_messages}
         out = app.invoke(init)
         messages = out.get("messages") or []
@@ -309,6 +323,7 @@ def run_agent_stream(
     model_id: Optional[str] = None,
     deep_think: bool = False,
     answer_style: Optional[str] = None,
+    intent: Optional[str] = None,
 ) -> Iterator[dict]:
     """
     6.2 流式运行 Agent：与 run_agent 逻辑一致，但对 LLM 使用 .stream()。
@@ -327,7 +342,7 @@ def run_agent_stream(
         except Exception:
             pass
     try:
-        messages = _build_initial_messages(question, initial_messages, answer_style=answer_style)
+        messages = _build_initial_messages(question, initial_messages, answer_style=answer_style, intent=intent)
         llm = _get_llm()
         tools = get_all_tools()
         name2tool = {t.name: t for t in tools}
