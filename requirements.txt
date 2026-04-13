@@ -28,6 +28,9 @@ paddleocr>=2.7.0  # 光学字符识别
 PyJWT>=2.8.0
 bcrypt>=4.0.0
 slowapi>=0.1.9
+# Celery 异步任务队列
+celery[redis]>=5.3.0
+redis>=5.0.0
 # EEG 硬件支持 (Muse S / Lab Streaming Layer)
 pylsl>=1.16.0  # LSL 协议，用于连接 EEG 硬件
 scipy>=1.11.0  # 信号处理（频段功率计算）
