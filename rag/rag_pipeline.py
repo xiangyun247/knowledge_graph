@@ -843,7 +843,7 @@ class RAGPipeline:
             answer = self.llm.chat(
                 messages,
                 temperature=0.7,
-                max_tokens=500
+                max_tokens=280          # 约280-450字，够说1-2个核心要点，防止信息过载
             )
 
             return answer.strip()

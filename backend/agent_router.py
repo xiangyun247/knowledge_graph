@@ -482,3 +482,13 @@ async def api_agent_query_stream(request: Request, req: AgentQueryRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------- Session 历史查询（供前端"小忆记得"面板使用） ----------
+
+@router.get("/agent/session/{session_id}")
+async def api_get_session_history(session_id: str):
+    """获取指定 session_id 的对话历史，返回 [{role, content}] 列表。"""
+    from backend.agent_session import get_session_history
+    history = get_session_history(session_id)
+    return {"session_id": session_id, "history": history}
