@@ -50,12 +50,12 @@ class SessionCreate(BaseModel):
 class SessionEnd(BaseModel):
     duration_seconds: int
     avg_score: float
-    avg_theta_beta: float
-    avg_alpha_beta: float
-    avg_theta_power: float
-    avg_alpha_power: float
-    avg_beta_power: float
-    avg_snr: float
+    avg_theta_beta: Optional[float] = None
+    avg_alpha_beta: Optional[float] = None
+    avg_theta_power: Optional[float] = None
+    avg_alpha_power: Optional[float] = None
+    avg_beta_power: Optional[float] = None
+    avg_snr: Optional[float] = None
     score_trend: List[float]
     cognitive_level: str
     session_note: Optional[str] = None
