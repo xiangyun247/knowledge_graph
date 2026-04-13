@@ -825,7 +825,7 @@ class MySQLClient:
             start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             end_time TIMESTAMP NULL,
             duration_seconds INT DEFAULT 0,
-            avg_score DECIMAL(5,4) DEFAULT 0,
+            avg_score DECIMAL(6,2) DEFAULT 0,
             avg_theta_beta DECIMAL(8,4) DEFAULT 0,
             avg_alpha_beta DECIMAL(8,4) DEFAULT 0,
             avg_theta_power DECIMAL(8,4) DEFAULT 0,
