@@ -4,16 +4,17 @@
 Celery 配置文件
 """
 
-# 消息代理配置 - 使用内存（本地测试用）
-BROKER_URL = 'memory://localhost/'
+# 消息代理配置 - 优先读环境变量，默认 Redis
+import os
+_redis_host = os.environ.get('REDIS_HOST', 'localhost')
+_redis_port = os.environ.get('REDIS_PORT', '6379')
+BROKER_URL = f'redis://{_redis_host}:{_redis_port}/0'
 BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': 3600,  # 任务过期时间（秒）
-    'fanout_prefix': True,
-    'fanout_patterns': True,
 }
 
-# 结果存储配置 - 使用内存（本地测试用）
-CELERY_RESULT_BACKEND = 'cache+memory://'
+# 结果存储配置 - 使用 Redis
+CELERY_RESULT_BACKEND = f'redis://{_redis_host}:{_redis_port}/1'
 CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     'visibility_timeout': 3600,
 }
