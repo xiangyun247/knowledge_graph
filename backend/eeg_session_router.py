@@ -522,7 +522,7 @@ def delete_session(session_id: int):
 
 @router.post("/sessions/export")
 def export_sessions(
-    subject_ids: Optional[List[int]] = Body(default=None),
+    subject_ids: Optional[str] = Query(None, description="逗号分隔的subject_id，如 1,2,3"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     format: Optional[str] = Query("experiment", enum=["raw", "experiment"])
@@ -533,10 +533,12 @@ def export_sessions(
         conditions = ["s.status = 'completed'"]
         params = {}
         if subject_ids:
-            placeholders = ",".join([f":id{i}" for i in range(len(subject_ids))])
-            conditions.append(f"s.subject_id IN ({placeholders})")
-            for i, sid in enumerate(subject_ids):
-                params[f"id{i}"] = sid
+            ids = [int(x.strip()) for x in subject_ids.split(",") if x.strip()]
+            if ids:
+                placeholders = ",".join([f":id{i}" for i in range(len(ids))])
+                conditions.append(f"s.subject_id IN ({placeholders})")
+                for i, sid in enumerate(ids):
+                    params[f"id{i}"] = sid
         if start_date:
             conditions.append("s.start_time >= :start_date")
             params["start_date"] = start_date
