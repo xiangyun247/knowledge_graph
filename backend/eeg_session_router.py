@@ -522,10 +522,10 @@ def delete_session(session_id: int):
 
 @router.post("/sessions/export")
 def export_sessions(
-    subject_ids: Optional[str] = Query(None, description="逗号分隔的subject_id，如 1,2,3"),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    format: Optional[str] = Query("experiment", enum=["raw", "experiment"])
+    subject_ids: Optional[str] = Body(None, description="逗号分隔的subject_id，如 1,2,3"),
+    start_date: Optional[str] = Body(None),
+    end_date: Optional[str] = Body(None),
+    format: Optional[str] = Body("experiment", enum=["raw", "experiment"])
 ):
     """导出数据为 CSV。format=experiment 输出实验记录表格式，format=raw 输出原始字段"""
     mysql = get_mysql()
@@ -586,10 +586,19 @@ def export_sessions(
                 post_score_raw = note.get("post_score")
 
                 # 问卷原始分(1-5 六维度) 从 note.baseline/post 取均值
-                baseline_answers = note.get("baseline", [])
-                post_answers = note.get("post", [])
-                baseline_raw = sum(a.get("value", 0) for a in baseline_answers) if baseline_answers else 0
-                post_raw = sum(a.get("value", 0) for a in post_answers) if post_answers else 0
+                baseline_answers = note.get("baseline", {})
+                post_answers = note.get("post", {})
+                # 支持对象格式 (老人测试) 和数组格式
+                if isinstance(baseline_answers, dict):
+                    # 对象格式: {"mental_demand": 1, "physical_demand": 1, ...}
+                    baseline_raw = sum(v for v in baseline_answers.values() if isinstance(v, (int, float))) if baseline_answers else 0
+                else:
+                    # 数组格式: [{"value": 1}, {"value": 2}, ...]
+                    baseline_raw = sum(a.get("value", 0) for a in baseline_answers) if baseline_answers else 0
+                if isinstance(post_answers, dict):
+                    post_raw = sum(v for v in post_answers.values() if isinstance(v, (int, float))) if post_answers else 0
+                else:
+                    post_raw = sum(a.get("value", 0) for a in post_answers) if post_answers else 0
 
                 delta = post_raw - baseline_raw if baseline_raw and post_raw else ""
                 display_name = note.get("subject_display_name") or row.get("subject_name") or ""
