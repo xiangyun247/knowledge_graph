@@ -9,7 +9,7 @@ EEG 会话管理路由
 import json
 from datetime import datetime
 from typing import Optional, List, Union
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel
 from db.mysql_client import MySQLClient
 from loguru import logger
@@ -522,7 +522,7 @@ def delete_session(session_id: int):
 
 @router.post("/sessions/export")
 def export_sessions(
-    subject_ids: Optional[List[int]] = None,
+    subject_ids: Optional[List[int]] = Body(default=None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     format: Optional[str] = Query("experiment", enum=["raw", "experiment"])
