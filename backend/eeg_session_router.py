@@ -9,7 +9,7 @@ EEG 会话管理路由
 import json
 from datetime import datetime
 from typing import Optional, List, Union
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel
 from db.mysql_client import MySQLClient
 from loguru import logger
@@ -522,19 +522,25 @@ def delete_session(session_id: int):
 
 @router.post("/sessions/export")
 def export_sessions(
-    data: Optional[dict] = Body(None)
+    request: Request,
+    subject_ids: Optional[str] = Body(None, description="逗号分隔的subject_id，如 1,2,3"),
+    start_date: Optional[str] = Body(None),
+    end_date: Optional[str] = Body(None),
+    format: Optional[str] = Body("experiment", enum=["raw", "experiment"])
 ):
     """导出数据为 CSV。format=experiment 输出实验记录表格式，format=raw 输出原始字段"""
     mysql = get_mysql()
     try:
-        # 从请求体中获取参数
-        data = data or {}
-        subject_ids = data.get("subject_ids")
-        start_date = data.get("start_date")
-        end_date = data.get("end_date")
-        format = data.get("format", "experiment")
-
-        # 构建查询条件
+        # 优先使用请求体参数，如果没有则从查询参数获取
+        if subject_ids is None:
+            subject_ids = request.query_params.get("subject_ids")
+        if start_date is None:
+            start_date = request.query_params.get("start_date")
+        if end_date is None:
+            end_date = request.query_params.get("end_date")
+        if format is None:
+            format = request.query_params.get("format", "experiment")
+        
         conditions = ["s.status = 'completed'"]
         params = {}
         if subject_ids:
