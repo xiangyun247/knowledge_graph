@@ -524,50 +524,113 @@ def delete_session(session_id: int):
 def export_sessions(
     subject_ids: Optional[List[int]] = None,
     start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None)
+    end_date: Optional[str] = Query(None),
+    format: Optional[str] = Query("experiment", enum=["raw", "experiment"])
 ):
-    """导出数据为 CSV"""
+    """导出数据为 CSV。format=experiment 输出实验记录表格式，format=raw 输出原始字段"""
     mysql = get_mysql()
     try:
-        conditions = []
+        conditions = ["s.status = 'completed'"]
         params = {}
         if subject_ids:
             placeholders = ",".join([f":id{i}" for i in range(len(subject_ids))])
-            conditions.append(f"subject_id IN ({placeholders})")
+            conditions.append(f"s.subject_id IN ({placeholders})")
             for i, sid in enumerate(subject_ids):
                 params[f"id{i}"] = sid
         if start_date:
-            conditions.append("start_time >= :start_date")
+            conditions.append("s.start_time >= :start_date")
             params["start_date"] = start_date
         if end_date:
-            conditions.append("start_time <= :end_date")
+            conditions.append("s.start_time <= :end_date")
             params["end_date"] = end_date
 
-        where = " AND ".join(conditions) if conditions else "1=1"
+        where = " AND ".join(conditions)
 
         rows = mysql.execute_query(f"""
-            SELECT s.*, sub.subject_code, sub.name, sub.age, sub.gender, sub.cognitive_status
+            SELECT s.*, sub.subject_code, sub.name as subject_name, sub.age, sub.gender, sub.cognitive_status
             FROM eeg_sessions s
             LEFT JOIN eeg_subjects sub ON s.subject_id = sub.id
             WHERE {where}
-            ORDER BY s.start_time DESC
+            ORDER BY s.start_time ASC
         """, params)
         rows = [dict(r) for r in rows]
 
         import csv
         import io
         output = io.StringIO()
-        if rows:
-            writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+
+        if format == "experiment":
+            # 实验记录表格式
+            headers = ["序号", "编号", "姓名", "年龄", "性别", "认知状态",
+                       "基线分(/30)", "后测分(/30)", "Δ差值", "等级", "时长(秒)", "实验日期", "备注"]
+            writer = csv.DictWriter(output, fieldnames=headers)
             writer.writeheader()
-            for row in rows:
-                row_clean = {}
-                for k, v in row.items():
-                    if isinstance(v, datetime):
-                        row_clean[k] = v.isoformat()
-                    else:
-                        row_clean[k] = v
-                writer.writerow(row_clean)
+
+            gender_map = {"male": "男", "female": "女"}
+            cognitive_map = {"normal": "正常", "mci": "轻度障碍", "dementia": "中重度障碍"}
+            level_map = {"low": "低", "medium": "中", "high": "高"}
+
+            for idx, row in enumerate(rows, 1):
+                # 解析 session_note JSON
+                note = {}
+                if row.get("session_note"):
+                    try:
+                        note = json.loads(row["session_note"])
+                    except Exception:
+                        note = {}
+
+                subject_info = note.get("subject_info", {})
+                baseline_score_raw = note.get("baseline_score")
+                post_score_raw = note.get("post_score")
+
+                # 问卷原始分(1-5 六维度) 从 note.baseline/post 取均值
+                baseline_answers = note.get("baseline", [])
+                post_answers = note.get("post", [])
+                baseline_raw = sum(a.get("value", 0) for a in baseline_answers) if baseline_answers else 0
+                post_raw = sum(a.get("value", 0) for a in post_answers) if post_answers else 0
+
+                delta = post_raw - baseline_raw if baseline_raw and post_raw else ""
+                display_name = note.get("subject_display_name") or row.get("subject_name") or ""
+
+                duration_str = str(row.get("duration_seconds", 0)) if row.get("duration_seconds") else ""
+
+                # 实验日期
+                st = row.get("start_time")
+                if hasattr(st, "strftime"):
+                    date_str = st.strftime("%Y-%m-%d %H:%M")
+                elif isinstance(st, str):
+                    date_str = st[:16]
+                else:
+                    date_str = ""
+
+                writer.writerow({
+                    "序号": idx,
+                    "编号": row.get("subject_code", ""),
+                    "姓名": display_name,
+                    "年龄": subject_info.get("age", row.get("age", "")),
+                    "性别": gender_map.get(row.get("gender"), row.get("gender", "")),
+                    "认知状态": cognitive_map.get(row.get("cognitive_status"), row.get("cognitive_status", "")),
+                    "基线分(/30)": baseline_raw or "",
+                    "后测分(/30)": post_raw or "",
+                    "Δ差值": delta,
+                    "等级": level_map.get(row.get("cognitive_level"), row.get("cognitive_level", "")),
+                    "时长(秒)": duration_str,
+                    "实验日期": date_str,
+                    "备注": ""
+                })
+        else:
+            # 原始字段格式
+            if rows:
+                writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+                writer.writeheader()
+                for row in rows:
+                    row_clean = {}
+                    for k, v in row.items():
+                        if isinstance(v, datetime):
+                            row_clean[k] = v.isoformat()
+                        else:
+                            row_clean[k] = v
+                    writer.writerow(row_clean)
 
         return {"csv": output.getvalue(), "count": len(rows)}
     except Exception as e:
