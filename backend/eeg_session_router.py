@@ -520,26 +520,26 @@ def delete_session(session_id: int):
         mysql.disconnect()
 
 
+class ExportRequest(BaseModel):
+    subject_ids: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    format: str = "experiment"
+
+
 @router.post("/sessions/export")
 def export_sessions(
     request: Request,
-    subject_ids: Optional[str] = Body(None, description="逗号分隔的subject_id，如 1,2,3"),
-    start_date: Optional[str] = Body(None),
-    end_date: Optional[str] = Body(None),
-    format: Optional[str] = Body("experiment", enum=["raw", "experiment"])
+    data: ExportRequest = Body(...)
 ):
     """导出数据为 CSV。format=experiment 输出实验记录表格式，format=raw 输出原始字段"""
     mysql = get_mysql()
     try:
         # 优先使用请求体参数，如果没有则从查询参数获取
-        if subject_ids is None:
-            subject_ids = request.query_params.get("subject_ids")
-        if start_date is None:
-            start_date = request.query_params.get("start_date")
-        if end_date is None:
-            end_date = request.query_params.get("end_date")
-        if format is None:
-            format = request.query_params.get("format", "experiment")
+        subject_ids = data.subject_ids or request.query_params.get("subject_ids")
+        start_date = data.start_date or request.query_params.get("start_date")
+        end_date = data.end_date or request.query_params.get("end_date")
+        format = data.format or request.query_params.get("format", "experiment")
         
         conditions = ["s.status = 'completed'"]
         params = {}
