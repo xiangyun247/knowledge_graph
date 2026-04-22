@@ -1006,6 +1006,7 @@ class RegisterRequest(BaseModel):
     username: str = Field(..., description="用户名", min_length=3, max_length=64)
     email: Optional[str] = Field(None, description="邮箱")
     password: str = Field(..., description="密码", min_length=8, max_length=128)
+    role: Optional[str] = Field("patient", description="角色: doctor/patient/elderly")
 
 
 class LoginRequest(BaseModel):
@@ -1038,7 +1039,7 @@ async def register_user(body: RegisterRequest):
     _ensure_users_table()
     user_id = str(uuid.uuid4())
     password_hash = _hash_password(body.password)
-    role = "patient"
+    role = body.role if body.role in ("doctor", "patient", "elderly") else "patient"
 
     mysql_client.execute_update(
         """
