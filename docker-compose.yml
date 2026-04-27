@@ -7,6 +7,7 @@ services:
   # 注意：此容器使用自定义 entrypoint，会在启动前自动清理重复配置
   # 详见: docker/hadoop-entrypoint.sh 和 HADOOP_CONFIG_CLEANUP_SOLUTION.md
   hadoop-namenode:
+    profiles: ["hadoop"]
     build:
       context: .
       dockerfile: docker/Dockerfile.hadoop-python
@@ -34,6 +35,7 @@ services:
   # 注意：此容器使用自定义 entrypoint，会在启动前自动清理重复配置
   # 详见: docker/hadoop-entrypoint.sh 和 HADOOP_CONFIG_CLEANUP_SOLUTION.md
   hadoop-datanode:
+    profiles: ["hadoop"]
     build:
       context: .
       dockerfile: docker/Dockerfile.hadoop-datanode-python
@@ -57,6 +59,7 @@ services:
   # 注意：此容器使用官方镜像，entrypoint 脚本会在启动时追加配置
   # 如果发现重复配置，运行: python scripts/auto_clean_hadoop_configs.py
   hadoop-resourcemanager:
+    profiles: ["hadoop"]
     image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
     container_name: hadoop-resourcemanager
     hostname: hadoop-resourcemanager
@@ -77,6 +80,7 @@ services:
   # 注意：此容器使用官方镜像，entrypoint 脚本会在启动时追加配置
   # 如果发现重复配置，运行: python scripts/auto_clean_hadoop_configs.py
   hadoop-nodemanager:
+    profiles: ["hadoop"]
     build:
       context: .
       dockerfile: docker/Dockerfile.hadoop-nodemanager-python
@@ -99,6 +103,7 @@ services:
 
   # Hadoop HistoryServer（可选，用于查看任务历史）
   hadoop-historyserver:
+    profiles: ["hadoop"]
     image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
     container_name: hadoop-historyserver
     hostname: hadoop-historyserver
@@ -234,8 +239,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      hadoop-namenode:
-        condition: service_healthy
     restart: unless-stopped
 
   # Vue 前端（Nginx 托管静态文件，/api 反代到 backend）
@@ -295,8 +298,6 @@ services:
       mysql:
         condition: service_healthy
       neo4j:
-        condition: service_healthy
-      hadoop-namenode:
         condition: service_healthy
     command: celery -A backend.celery_app worker --loglevel=info --concurrency=4
     restart: unless-stopped
