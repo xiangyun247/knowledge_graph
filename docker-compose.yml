@@ -196,6 +196,7 @@ services:
     container_name: kg-backend
     ports:
       - "5001:5001"
+    env_file: .env
     environment:
       # Neo4j 配置
       - NEO4J_URI=bolt://neo4j:7687
